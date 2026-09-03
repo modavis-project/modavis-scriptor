@@ -1,0 +1,7 @@
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.sqlite binary
+*.traineddata binary
+services/graphics/example/processed/* -text
+*.tsv -whitespace

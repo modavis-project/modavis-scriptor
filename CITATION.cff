@@ -1,0 +1,25 @@
+cff-version: 1.2.0
+message: "If you use this software, cite this release and the source datasets relevant to your analysis."
+title: "MODAVIS Scriptor"
+type: software
+authors:
+  - family-names: "Ukolov"
+    given-names: "Dominik"
+    orcid: "https://orcid.org/0000-0002-7904-3892"
+    affiliation: "Digital Humanities (Image/Object), Friedrich Schiller University Jena; Research Group DIGITAL ORGANOLOGY, Leipzig University"
+version: 0.1.0
+date-released: 2026-09-03
+doi: "10.5281/zenodo.22284008"
+repository-code: "https://github.com/modavis-project/modavis-scriptor"
+url: "https://doi.org/10.5281/zenodo.22284008"
+license: CC-BY-4.0
+abstract: >-
+  A local research application for evidence-aware transcription, structured
+  review and reproducible export of text found in document and image sources.
+keywords:
+  - optical character recognition
+  - digital organology
+  - pipe organs
+  - provenance
+  - human review
+  - research software

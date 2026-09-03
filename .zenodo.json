@@ -1,0 +1,35 @@
+{
+  "title": "MODAVIS Scriptor v0.1.0",
+  "upload_type": "software",
+  "version": "0.1.0",
+  "publication_date": "2026-09-03",
+  "creators": [
+    {
+      "name": "Ukolov, Dominik",
+      "orcid": "0000-0002-7904-3892",
+      "affiliation": "Digital Humanities (Image/Object), Friedrich Schiller University Jena; Research Group DIGITAL ORGANOLOGY, Leipzig University"
+    }
+  ],
+  "description": "<p>MODAVIS Scriptor is a local research application for extracting visible text from images, reviewing readings against the source, and exporting structured results with processing provenance. Version 0.1.0 provides a specialized mode for photographed pipe-organ stops and a general visible-text mode.</p><p>The application separates immutable OCR, advisory MODAVIS corpus matches and explicit human decisions. Review events record the reviewer, rationale, field values, region version and timestamp. Reprocessing creates a new run. Exports include Markdown, CSV, JSON and a research bundle containing source images, OCR inputs and outputs, coordinates, checksums, configuration and review history.</p><p>The release includes Docker Compose definitions, locked dependencies, OCR models, a MODAVIS POD 1.5.0 retrieval projection and an immediately viewable organ-stop example. The photograph is by Tucker501, <em>Organ-stops.jpg</em> (2020), Wikimedia Commons, CC BY-SA 4.0. Its original bytes, source attribution and separately identified processing derivatives are included. The corpus projection derives from MODAVIS Pipe Organ Dataset 1.5.0, DOI 10.5281/zenodo.22234059.</p><p>Version 0.1.0 is intended for local single-user research use. OCR and detection results require review; no general accuracy benchmark is claimed. Private manuscript collections are not included.</p>",
+  "access_right": "open",
+  "license": "cc-by-4.0",
+  "keywords": ["MODAVIS", "digital organology", "pipe organs", "optical character recognition", "research software", "provenance", "human review", "image transcription"],
+  "related_identifiers": [
+    {
+      "identifier": "https://github.com/modavis-project/modavis-scriptor/tree/v0.1.0",
+      "relation": "isIdenticalTo",
+      "resource_type": "software"
+    },
+    {
+      "identifier": "10.5281/zenodo.22234059",
+      "relation": "references",
+      "resource_type": "dataset"
+    },
+    {
+      "identifier": "https://commons.wikimedia.org/wiki/File:Organ-stops.jpg",
+      "relation": "references",
+      "resource_type": "image-photo"
+    }
+  ],
+  "notes": "The original application and documentation use CC BY 4.0. The included photograph and its adaptations retain CC BY-SA 4.0; Tesseract tessdata_best model files retain Apache License 2.0. Third-party notices and source-specific rights are included in the archive."
+}

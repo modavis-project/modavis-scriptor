@@ -1,0 +1,5 @@
+corpus/modavis-*.sqlite
+corpus/documentation.tar.gz
+__pycache__
+.venv
+data

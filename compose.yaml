@@ -1,0 +1,47 @@
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: modavis-scriptor:0.1.0
+    init: true
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${MODAVIS_SCRIPTOR_PORT:-3000}:3000"
+    command: ["wrangler", "dev", "--config", "dist/server/wrangler.json", "--ip", "0.0.0.0", "--port", "3000", "--persist-to", "/data", "--var", "GRAPHICS_API_URL:http://graphics:8010"]
+    depends_on:
+      graphics:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 6
+
+  graphics:
+    build:
+      context: ./services/graphics
+    image: modavis-scriptor-graphics:0.1.0
+    init: true
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${GRAPHICS_PORT:-8010}:8010"
+    volumes:
+      - graphics-data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8010/health')"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 6
+
+volumes:
+  graphics-data:
+    name: modavis-scriptor-graphics-data

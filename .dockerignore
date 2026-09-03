@@ -1,0 +1,15 @@
+.git
+.github
+.wrangler
+.vinext
+.next
+dist
+node_modules
+release
+.DS_Store
+.env*
+.dev.vars*
+services
+scripts
+docs
+*.log

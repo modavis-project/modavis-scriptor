@@ -1,0 +1,7 @@
+{
+  "repository": "https://github.com/tesseract-ocr/tessdata_best",
+  "commit": "e12c65a915945e4c28e237a9b52bc4a8f39a0cec",
+  "files": ["eng.traineddata", "deu.traineddata"],
+  "license": "Apache-2.0",
+  "purpose": "Unmodified upstream English and German LSTM models. No MODAVIS fine-tuning or vocabulary injection."
+}

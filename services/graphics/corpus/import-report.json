@@ -1,0 +1,29 @@
+{
+  "schema": "modavis-scriptor.modavis-retrieval/v1",
+  "created_at": "2026-09-03T16:02:47.314153+00:00",
+  "dataset": "MODAVIS Pipe Organ Dataset (POD) 1.5.0 — Public Core, Reproducibility Databases, URI Ledger, and Documentation",
+  "creator": "Dominik Ukolov",
+  "version": "1.5.0",
+  "doi": "10.5281/zenodo.22234059",
+  "url": "https://zenodo.org/records/22234059",
+  "license": "CC BY 4.0",
+  "license_url": "https://creativecommons.org/licenses/by/4.0/",
+  "source_file": "modavis-pod-1.5-orgrec.sqlite",
+  "source_md5": "md5:4a5f45e397ca0070b9d246a18454435a",
+  "source_sha256": "dd57394627c91d9fa3f4f3bfd1770c773184345448af80bef63d834de0cbc464",
+  "input_components": 503980,
+  "joined_components": 503980,
+  "component_types": {
+    "coupler": 46388,
+    "accessory": 32254,
+    "stop": 425230,
+    "division": 108
+  },
+  "retrieval_labels": 38103,
+  "projection": "All component types; distinct exact retrieval names with type; row counts and first three evidence rows sorted by original label and component_id. Original labels and provenance in evidence are unmodified.",
+  "search_policy": "NFC/casefold/whitespace, trailing pitch/rank split for retrieval only; no diacritic folding, semantic synonyms, frequency prior or automatic replacement.",
+  "scope": "Domain corpus, not a same-author corpus and not evidence that this photograph depicts a matched organ.",
+  "source_url_limit": "OrgRec provides source_record_id/source_key and hashes, not per-component source URLs. Cite the versioned dataset and identifiers; do not invent external URLs.",
+  "importer_sha256": "d19473819fb692e9934916a77d27fe3c5bf4002aa0a82073d78179f803079d54",
+  "catalogue_sha256": "de3385a96bb1b089594f7091abe02b729d17197933dbfb8a6327910ef531a362"
+}
