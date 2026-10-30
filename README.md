@@ -88,19 +88,21 @@ npm ci
 npm run doctor
 npm run check
 npm run test:evaluation
-npx playwright install chromium
+npx playwright install chromium firefox webkit
 npm run test:integration
 ```
 
 `check` runs lint, TypeScript, the production build and dependency auditing. `test:integration` builds a disposable stack on free loopback ports, checks backend integrity and migrations, runs fresh OCR/upload tests and Chromium review tests, then removes only that test stack. It never mounts the research volume.
 
-For frontend reload and separate backend development data, see [`docs/INSTALLATION.md`](docs/INSTALLATION.md). That setup uses ports 3400/8410 and a separate Compose project.
+For frontend reload and separate backend development data, see [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md). That setup uses ports 3400/8410 and a separate Compose project. macOS users can select a dedicated internal-SSD Docker runtime with `npm run runtime -- start` and `npm run runtime -- exec -- npm run test:integration`, without changing the global Docker context.
 
 Individual checks and their boundaries are described in [`docs/VALIDATION.md`](docs/VALIDATION.md). Mutation tests require an explicitly disposable service and refuse the usual research ports.
 
 ## Repository documentation
 
 - [`docs/INSTALLATION.md`](docs/INSTALLATION.md): operating systems, native development, backups, upgrades and troubleshooting
+- [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md): isolated runtime, portable commands, API contracts and UI development
+- [`docs/BACKUP.md`](docs/BACKUP.md): verified live backups, restore rehearsal and non-overwriting restore
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): service boundaries, persistence and security assumptions
 - [`docs/METHOD.md`](docs/METHOD.md): detection, OCR, corpus retrieval and human review method
 - [`docs/CORPUS_REBUILD.md`](docs/CORPUS_REBUILD.md): source checksums and retrieval-projection reconstruction

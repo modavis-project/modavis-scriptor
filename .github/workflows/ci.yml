@@ -113,6 +113,14 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      - name: Parse the WSL preflight without executing WSL
+        shell: pwsh
+        run: |
+          $wslTokens = $null
+          $wslParseErrors = $null
+          $wslPath = Join-Path $PWD 'scripts/dev/check-wsl.ps1'
+          [System.Management.Automation.Language.Parser]::ParseFile($wslPath, [ref]$wslTokens, [ref]$wslParseErrors) | Out-Null
+          if ($wslParseErrors.Count -gt 0) { throw ($wslParseErrors | Out-String) }
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc

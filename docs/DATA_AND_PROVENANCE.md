@@ -8,6 +8,8 @@ The run table records title, project label, status, creation time, metadata JSON
 
 Database schema 2 additionally anchors `source_sha256` from uploaded request bytes before queueing. Processing verifies the original before and after OCR. A failed run can create a clean child only from that preserved source digest; a legacy failed run without one requires reupload. Queued/running parents must finish before rerunning. Completed legacy runs acquire the database source digest only after their existing recorded evidence has verified successfully.
 
+Schema 3 records processing attempt/publication state in `attempt_id` and `artifact_path`. New evidence is published atomically under `<run-id>/processed/`; completed flat-layout legacy/frozen runs remain unchanged. An interrupted attempt is not silently presented as a completed result. Restart verifies an anchored prepared publication or requeues the verified source.
+
 ## Result schema
 
 `result.json` uses schema identifier `modavis-scriptor.graphics-run/v1`. It contains:
@@ -73,6 +75,8 @@ Serving, reviewing, rerunning and exporting a completed run verifies its recorde
 The derived response includes `integrity.coverage`, `verified_files`, `unverified_files` and a note. Coverage is `complete` for a new manifest-bearing run, `frozen-example` for the trusted bundled manifest, or `legacy-recorded-hashes` for an older non-example run. Legacy raw results and reviews are never rewritten. Files with no historical digest cannot be certified after the fact; legacy OCR inputs/TSVs without such digests are excluded from bundles. Create a child run for complete artifact coverage under the current pipeline.
 
 The database schema is versioned independently of the run JSON schema using SQLite `PRAGMA user_version`. Existing compatible 0.1.0 databases are adopted by the initial migration; future schema versions are rejected. Migration tests check preservation of runs, decisions and append-only constraints.
+
+Verified backups additionally preserve historically unhashed legacy OCR files with explicit transport checksums and a historical-coverage limitation. They do not add those hashes to the immutable result. Backups include the consistent SQLite database and managed files; research ZIP exports are a separate format. See `BACKUP.md` for snapshot locking, actual restore rehearsal and non-overwriting publication.
 
 ## Sensitive data
 

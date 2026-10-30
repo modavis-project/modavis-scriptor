@@ -21,17 +21,21 @@ The service stores state in `/data`:
   graphics.sqlite
   <run-id>/
     original
-    image.png
-    result.json
-    source-*.py
-    rNNN-crop.png
-    rNNN-ocr.png
-    rNNN-ocr.png.tsv
-    rNNN-alt.png
-    rNNN-alt.png.tsv
+    processed/           published evidence for new runs
+      original
+      image.png
+      result.json
+      source-*.py
+      rNNN-crop.png
+      rNNN-ocr.png[.tsv]
+      rNNN-alt.png[.tsv]
 ```
 
 `original` contains the uploaded bytes. `image.png` is the EXIF-normalized RGB derivative used by the interface and coordinate system. OCR inputs and TSV outputs are retained separately from evidence crops.
+
+New processing writes a private `.attempt-<id>` directory. Generated artifacts are flushed and verified; the result digest is committed before atomic publication to `processed/`. Restart either validates and finishes that prepared publication or discards only the incomplete attempt and requeues the preserved source. Completed historical/frozen runs keep their existing flat layout and bytes. Schema 3 records `artifact_path` and `attempt_id` without changing the raw run JSON schema.
+
+An operating-system ownership lock rejects a second service for the same data directory. Shared operation locks coordinate uploads, processing and review with exclusive backup snapshots; Windows conservatively serializes the operations. Marked admission folders absent from SQLite can be cleaned after interruption; unmarked directories are never treated as disposable reservations.
 
 ## Persistence
 
@@ -44,6 +48,14 @@ The frozen example uses its trusted file manifest. Older non-example results ret
 SQLite `PRAGMA user_version` selects the ordered schema migration. The initial migration validates/adopts the existing 0.1.0 structure and preserves its rows and append-only triggers. A database with a newer unsupported schema is rejected rather than modified. Back up persistent data before upgrades.
 
 This protects against accidental application-level replacement. It is not a cryptographic audit system against an administrator who can modify both the files and database. Long-term preservation requires externally stored checksums or a signed archival package.
+
+Image and ZIP responses use preverified temporary files with bounded chunked copy/hash operations. Streaming begins only after artifact verification succeeds, and cleanup runs even on disconnect. Transfer memory does not scale with the total archive size; disk space and the image-processing arrays still scale with the workload. Verified live backup/restore is described in `BACKUP.md`.
+
+## Frontend contracts and state
+
+Pydantic models in `services/graphics/contracts.py` are the actual FastAPI request/response contracts. A deterministic OpenAPI generator emits the committed frontend types/schema; runtime guards validate successful responses and the API client handles structured failures. CI rejects drift and unsupported generation features.
+
+The workbench composes focused upload/configuration/evidence/queue/review/output panels. Its controller owns run loading and navigation. Review drafts are retained per region, including after a 409; comparing/rebasing a stale draft is explicit. Markdown is lazy-loaded separately from the initial evidence UI.
 
 ## Processing sequence
 

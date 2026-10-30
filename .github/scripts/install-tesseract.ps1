@@ -16,8 +16,9 @@ $process = Start-Process -FilePath $installer -ArgumentList @('/S', "/D=$destina
 if ($process.ExitCode -ne 0) { throw "Tesseract installer failed: $($process.ExitCode)" }
 $executable = Join-Path $destination 'tesseract.exe'
 $version = @(& $executable --version)
-if ($LASTEXITCODE -ne 0 -or $version[0] -notmatch '^tesseract 5\.5\.3') {
+$engineStatus = $LASTEXITCODE
+$version | Write-Output
+if ($engineStatus -ne 0 -or $version[0] -notmatch '^tesseract v?5\.5\.3(?:[.\s-]|$)') {
     throw 'Installed Tesseract engine version does not match the pin'
 }
 $destination | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
-Write-Output $version[0]

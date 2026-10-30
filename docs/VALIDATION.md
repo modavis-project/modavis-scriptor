@@ -43,6 +43,16 @@ The native integration run used temporary data and free loopback ports, then rem
 
 The local Docker Desktop backing storage is an APFS sparse disk image on an external ExFAT volume that was 96% full. Cold builds showed sustained VM I/O stalls despite low CPU/memory pressure and apparently ample virtual free space. This is a storage-maintenance concern rather than an application performance benchmark. The native development/test path is available independently; plan storage cleanup or migration before relying on repeated heavy cold builds.
 
+## Further engineering validation
+
+The subsequent implementation uses a dedicated `colima-scriptor` Docker context whose data is on the internal APFS filesystem. Its actual start/status/child-command checks preserved the global `desktop-linux` selection. The original external disk, Docker Desktop projects and research data were not migrated or pruned. A cold graphics system-package install completed in about eight seconds here, compared with roughly twenty minutes on the previous backing stack; this measures setup on these hosts, not OCR performance.
+
+Current local checks include 27 backend tests, 16 additional reliability cases, 18 scorer tests, 20 annotation-workflow tests, five model/generation checks, seven runtime/network contract tests, ten environment/launcher/storage tests and five owned-process cleanup checks. The full Linux arm64 container suite passed locally, with Chromium/Firefox/WebKit binaries running on the Mac host. Native three-browser acceptance and synthetic annotation UI acceptance also passed. Real source candidates remain unreviewed: eight collected images, zero annotation submissions.
+
+Reliability cases exercise a real killed Tesseract/API followed by recovery, prepared-publication recovery, concurrent review history, queue saturation/cleanup, single-service ownership, live backup during a review, actual archive extraction/restore, schema/transport corruption, non-overwrite behavior, legacy byte preservation and disconnect cleanup. A generated over-64-MiB ZIP/copy workload kept measured Python allocation below 12 MiB; this bounds transfer memory, not native image-processing memory or total process RSS.
+
+The expanded CI matrix independently runs Linux amd64 and arm64 container/browser suites and Windows native validation. Native Windows and real WSL2 deployment are separate environments: `scripts/dev/check-wsl.ps1` is a preflight tool, not a claim that a WSL installation test executed. See the draft PR's latest checks for the exact current source revision and platform outcomes.
+
 ## Current development suite
 
 Use Node 22.23.4 (`.nvmrc`) and a responding Docker daemon. From the repository root:
@@ -52,11 +62,11 @@ npm ci
 npm run doctor
 npm run check
 npm run test:evaluation
-npx playwright install chromium
+npx playwright install chromium firefox webkit
 npm run test:integration
 ```
 
-`check` includes lint, TypeScript, production build and npm auditing. CI uses the same runtime and integration entry point. On Linux, install Chromium with `npx playwright install --with-deps chromium`.
+`check` includes lint, TypeScript, production build and npm auditing. CI uses the same runtime and integration entry point. Install all browser engines with `npx playwright install chromium firefox webkit`; on Linux use `--with-deps`. API contract generation checks need the locked Python environment and run with `npm run contracts:check`; runtime contract checks use `npm run test:contracts`. `npm run test:dev` covers host/runtime trust boundaries.
 
 CI also audits all pinned Python packages with `pip-audit==2.10.1`. If uv is installed, the equivalent isolated local command is:
 
@@ -74,10 +84,11 @@ The optional `--native` path runs the same backend/OCR/API/browser checks using 
 | --- | --- |
 | `verify-assets.py` | Exact 112-file frozen manifest, historical source snapshots, models, corpus digest/SQLite integrity/counts and importer digest. Current source files may differ from historical snapshots. |
 | `test-backend.py` | Temporary migration/adoption tests, preservation of review history/triggers, rejection of newer/unknown schemas, corruption/deletion checks across evidence-consuming endpoints, allowlist exports and legacy verification coverage. |
+| `test-reliability.py` | Actual OCR/API interruption/restart, durable publication, concurrency/load, ownership, bounded transfer/ZIP memory, disconnect cleanup and verified backup/restore. |
 | `test-pipeline.py` | Fresh full-panel detection boxes and real close-up dual-model OCR (`Scharff / IV-VI`). Uses temporary output/data. |
 | `test-api.py` | Fresh multipart full-panel upload and automatic OCR, validation, review history, child runs and exports against an explicitly disposable instance. |
-| Playwright Chromium | Seed loading, region/crop selection, candidate draft without acceptance, reviewer/rationale gates, acceptance/Markdown update, persistence after reload, raw OCR, JSON download and narrow viewport. |
-| `test:evaluation` | Synthetic algorithm/input-validation regressions for detection matching and OCR scoring; does not measure real-world accuracy. |
+| Playwright Chromium/Firefox/WebKit | Separate child run per engine; keyboard draft retention/navigation, rationale/identity gates, acceptance/persistence, immutable raw export, mobile/large viewports and explicit stale-review compare/rebase. |
+| `test:evaluation` | Synthetic scoring and blind-annotation/adjudication/freezing trust-boundary tests. Workflow preview tests use Pillow; no real-world accuracy is measured. |
 
 ## API integration checks
 
@@ -115,7 +126,7 @@ docker compose -f compose.test.yaml down --volumes
 
 This file names its project `modavis-scriptor-tests` and does not mount the research volume. `SCRIPTOR_TEST_API_PORT` and `SCRIPTOR_TEST_WEB_PORT` override its host ports. API/browser mutation tests require loopback URLs, reject redirects/remote targets and ports 3000/8010/3080/8080, and require `disposable_test_instance: true` from health (`SCRIPTOR_DISPOSABLE_TEST=1` in the test container). They also require pristine test data. Recreate the test containers before another API/browser run; do not reuse existing test reviews.
 
-For completely native backend debugging, activate the locked Python 3.12 environment and run `PYTHONPATH=services/graphics python scripts/graphics/test-backend.py` or `test-pipeline.py`. These scripts create their own temporary state. The pipeline test additionally requires native Tesseract and both language model sets. The asset verifier and evaluation tests use only the standard library.
+For completely native backend debugging, activate the locked Python 3.12 environment and run `PYTHONPATH=services/graphics python scripts/graphics/test-backend.py`, `test-pipeline.py` or `test-reliability.py`. These scripts create their own temporary state. OCR/reliability checks require native Tesseract and both language model sets. The asset verifier and scorer-only tests use the standard library; workflow image-preview checks use Pillow from the locked environment.
 
 ## Manual interface checks
 

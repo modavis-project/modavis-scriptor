@@ -17,15 +17,19 @@ The next feature milestone should improve detection and transcription across var
 
 Completion requires the dataset manifest, annotation protocol/adjudication record, baseline report, reproducible run configuration and a documented decision for every protected-term regression. The current example and synthetic unit tests do not satisfy this research acceptance criterion.
 
-## Engineering priorities after the foundation
+## Delivered engineering priorities
 
-| Priority | Improvement | Trigger and acceptance |
+| Area | Implementation | Acceptance evidence |
 | --- | --- | --- |
-| High | Shared API contracts and smaller workbench components | Before substantial UI expansion: generate or validate response types from OpenAPI, separate upload/review/evidence views, preserve browser behavior. |
-| High | Extended crash/recovery and load coverage | Build on the admission/migration race tests with interruption during real OCR, sustained queue saturation and simultaneous reviewers; no lost evidence or silent decisions. |
-| Medium | Export/processing memory and performance | Measure representative large inputs, archive memory and review latency before changing limits; retain deterministic artifact coverage. |
-| Medium | Backup/restore and migration rehearsal | Verify a real restored copy with file/database checks before future persistent-schema changes; never use the research volume for tests. |
-| Medium | Broader browser/platform coverage | Add Firefox/WebKit and independently exercise Windows/WSL; current automated browser coverage is Chromium. |
+| Shared contracts and focused panels | Actual Pydantic/OpenAPI contracts generate frontend types/schema with runtime validation; configuration/upload/evidence/queue/review/output are separate. | Model/generation and runtime/network tests; drift check; three-browser interaction. |
+| Recovery and concurrency | Staged atomic OCR publication, restart recovery, single-service ownership, durable admission, explicit stale-draft compare/rebase. | Real killed Tesseract/API restart, prepared publication recovery, concurrent reviews and sustained queue limits. |
+| Transfer memory and initial UI | Chunked verified file copy and disk-spooled response/ZIP delivery with disconnect cleanup; lazy Markdown. | Over-64-MiB transfer/archive tests with bounded Python allocation; client largest chunk reduced from about 516 KB to 332 KB without raising warning limits. Image inference memory still depends on image dimensions. |
+| Verified backup/restore | Consistent live SQLite/file snapshot, transport manifest, actual extraction/rehearsal, schema/evidence checks, atomic non-overwriting restore. | Concurrent review during backup, corrupt archives, unsafe paths, legacy preservation, directory durability and restore tests. |
+| Browser/platform checks | Chromium, Firefox and WebKit acceptance; Linux amd64/arm64 container jobs; Windows native job with pinned Tesseract; portable command/process cleanup. | Actual local native/arm64 checks and CI results in `VALIDATION.md`. WSL prerequisite tooling is supplied; a real WSL installation remains a distinct manual check. |
+| Storage isolation | Separate Colima context on internal APFS; physical backing-capacity diagnostics and child-only context selection. | Actual dedicated VM start/status/exec, preserved global context, fast local arm64 cold build and complete integration. No other project data was moved/deleted. |
+| Evaluation workflow | Eight rights-documented unreviewed candidates; blind annotation, independent adjudication, revision safety, verified freeze, scoring that excludes unreadable text from recognition denominators. | Synthetic workflow/API/UI tests and actual pinned-source collection. No real human annotations or accuracy results are fabricated. |
+
+The implemented engineering work is the acceptance baseline for continued development. Recognition experiments should now use the collection/annotation milestone above; quality claims remain dependent on genuine human-reviewed data. Capacity planning and filesystem/hardware maintenance for unrelated Docker Desktop storage are outside this isolated runtime's data boundary.
 
 ## Separate scope decisions
 

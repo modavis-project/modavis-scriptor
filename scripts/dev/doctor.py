@@ -54,7 +54,7 @@ def main():
         check("Python dependencies", [python, "-c", "import cv2, numpy, PIL, rapidfuzz, fastapi, uvicorn, multipart; print('Imports passed')"],
               "Install services/graphics/requirements.lock in the Python 3.12 virtual environment.")
         check("Tesseract 5", ["tesseract", "--version"], "Install Tesseract 5, including English and German fast models.",
-              lambda text: bool(re.match(r"tesseract 5\.", text)))
+              lambda text: bool(re.match(r"tesseract v?5\.", text)))
         check("System OCR languages", ["tesseract", "--list-langs"], "Install both eng and deu language models.",
               lambda text: {"eng", "deu"} <= set(text.splitlines()))
     else:

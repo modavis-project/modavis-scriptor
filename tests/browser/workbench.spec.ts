@@ -93,7 +93,7 @@ test("isolated evidence review, keyboard drafts, conflicts, persistence and resp
   await page.getByRole("tab", { name: "Unveränderte OCR", exact: true }).focus();
   await page.keyboard.press("ArrowLeft");
   await expect(page.getByRole("tab", { name: "Arbeitsstand", exact: true })).toBeFocused();
-  const downloading = page.waitForEvent("download");
+  const downloading = page.waitForEvent("download", { timeout: 15_000 });
   await page.getByRole("link", { name: "JSON", exact: true }).click();
   const download = await downloading;
   expect(download.suggestedFilename()).toBe(`${id}.json`);

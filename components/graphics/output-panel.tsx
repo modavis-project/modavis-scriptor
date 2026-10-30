@@ -26,15 +26,16 @@ export function OutputPanel({
           <h2 className="font-serif text-2xl">Vollständiges Ergebnis</h2>
           <div className="flex flex-wrap gap-2">
             {[
-              ["markdown", "Markdown"],
-              ["csv", "CSV"],
-              ["json", "JSON"],
-              ["bundle", "Forschungs-ZIP"],
-            ].map(([format, label]) => (
+              ["markdown", "Markdown", ".md"],
+              ["csv", "CSV", ".csv"],
+              ["json", "JSON", ".json"],
+              ["bundle", "Forschungs-ZIP", "-research.zip"],
+            ].map(([format, label, suffix]) => (
               <a
                 key={format}
                 className="secondary-action"
                 href={`/api/graphics/runs/${runId}/export?format=${format}`}
+                download={`${runId}${suffix}`}
               >
                 <Download className="size-4" />
                 {label}

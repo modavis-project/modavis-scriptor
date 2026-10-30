@@ -6,6 +6,8 @@ Docker Compose is the reference deployment. For the historical 0.1.0 release, th
 
 Windows users should run Docker Desktop with the WSL 2 backend and execute the commands from PowerShell or a WSL shell in a local filesystem checkout. Very slow builds commonly result from keeping the checkout on a network share.
 
+The maintained development workflows, portable Windows commands and isolated macOS runtime are in `DEVELOPMENT.md`. On a Windows/WSL2 host, `powershell -File scripts/dev/check-wsl.ps1` checks the actual default WSL kernel, Linux Docker engine and Compose configuration. Then run the integration suite from a checkout inside the WSL Linux filesystem. Native Windows CI is distinct from a manually executed WSL installation test.
+
 ## First start
 
 ```bash
@@ -19,6 +21,8 @@ The first build downloads Node, Python and Debian packages. The application then
 The example is copied into the persistent volume only when its run identifier does not already exist. Restarting does not reset reviews. New source files in a rebuilt image do not overwrite evidence from an existing completed run.
 
 ## Backup and restore
+
+For the current development version, use the verified snapshot/rehearsal/non-overwriting tools in `BACKUP.md`. The stopped-service tar procedure below remains a pre-upgrade fallback for historical 0.1.0 installations whose image does not contain the new backup module.
 
 Create a consistent backup while the graphics service is stopped:
 
@@ -109,11 +113,11 @@ Restart this native backend after Python changes.
 
 ```bash
 npm run check
-npx playwright install chromium
+npx playwright install chromium firefox webkit
 npm run test:integration
 ```
 
-On Linux, Playwright may need `npx playwright install --with-deps chromium`. The integration runner uses a randomly named Compose project, free loopback ports and fresh disposable data. It runs asset, backend/migration, real OCR, upload/API, proxy and Chromium checks, then removes only its own containers and volumes even on failure. `--no-build` reuses the test images; `--skip-browser` explicitly runs a reduced suite. See `VALIDATION.md`.
+On Linux, Playwright may need `npx playwright install --with-deps chromium firefox webkit`. The integration runner uses a randomly named Compose project, free loopback ports and fresh disposable data. It runs asset, backend/migration/reliability, real OCR, upload/API, proxy and all three browser-engine checks, then removes only its own containers and volumes even on failure. `--no-build` reuses the test images; `--skip-browser` explicitly runs a reduced suite. See `VALIDATION.md` and `DEVELOPMENT.md` for full host prerequisites and contract/workflow checks.
 
 For an entirely native test stack, run `npm run test:integration -- --native`. It uses the prepared Python/Tesseract environment and Wrangler on free ports with temporary state, and stops its own processes afterwards. `--native --no-build` reuses the host web build. CI exercises the Docker path.
 
