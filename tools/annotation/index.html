@@ -61,9 +61,29 @@ MODAVIS literal-visible-text protocol v1; independent visual reading, NFC only f
             toggles drawing. Arrow keys select regions; Delete removes the selected region when
             focus is outside an input.
           </p>
-          <div class="image-scroll">
+          <div class="view-controls" role="group" aria-label="Image view controls">
+            <button id="view-fit" type="button" aria-pressed="true" disabled>Fit</button>
+            <button id="view-natural" type="button" aria-pressed="false" disabled>
+              100% natural pixels
+            </button>
+            <label
+              >Zoom (natural pixels)
+              <input id="view-zoom" type="range" min="25" max="400" step="5" value="100" disabled />
+            </label>
+            <output id="zoom-value" for="view-zoom" aria-live="polite">Fit</output>
+          </div>
+          <p class="small">
+            Zoom changes the view only. Scroll, drag with a mouse, or pan with one finger when
+            drawing is off.
+          </p>
+          <div
+            id="image-scroll"
+            class="image-scroll"
+            tabindex="0"
+            aria-label="Scrollable image evidence"
+          >
             <div id="image-stage">
-              <img id="source-image" alt="Selected source image" /><svg
+              <img id="source-image" alt="Selected source image" draggable="false" /><svg
                 id="overlay"
                 viewBox="0 0 1000 1000"
                 preserveAspectRatio="none"
@@ -109,6 +129,19 @@ MODAVIS literal-visible-text protocol v1; independent visual reading, NFC only f
       <aside class="panel editor" aria-label="Region annotation">
         <h2>Regions <span id="region-count">0</span></h2>
         <nav id="regions" aria-label="Region selection"></nav>
+        <section id="crop-preview" aria-label="Selected source crop" hidden>
+          <h3>Selected source crop</h3>
+          <p id="crop-info" class="small"></p>
+          <div id="crop-scroll" tabindex="0" aria-label="Scrollable source pixel crop">
+            <canvas id="region-crop" width="1" height="1" role="img"
+              >A display crop of the unchanged source image.</canvas
+            >
+          </div>
+          <p class="small">
+            Source pixels only, enlarged with nearest-neighbor sampling when useful. No OCR,
+            enhancement or suggested reading.
+          </p>
+        </section>
         <form id="region-form">
           <fieldset id="region-fields" disabled>
             <legend id="selected-heading">Select or draw a region</legend>

@@ -15,6 +15,10 @@ const state = {
   dirty: false,
   loading: 0,
   saving: false,
+  view: "fit",
+  zoom: 100,
+  pan: null,
+  suppressClick: false,
 };
 const SVG = "http://www.w3.org/2000/svg";
 const coordinates = ["box-x", "box-y", "box-width", "box-height"].map($);
@@ -104,6 +108,9 @@ function source(item) {
   const url = new URL(item.image_url, location.href);
   if (url.origin !== location.origin)
     throw new Error("Image evidence must be served by this local annotation server.");
+  state.view = "fit";
+  state.zoom = 100;
+  for (const id of ["view-fit", "view-natural", "view-zoom"]) $(id).disabled = true;
   $("source-image").src = url.href;
   $("source-image").alt = `EXIF-normalized source image ${item.id}`;
   $("image-title").textContent = item.id;
@@ -259,7 +266,7 @@ function overlay(preview) {
       "aria-label": `Select region ${region.id}`,
     });
     rect.addEventListener("click", () => {
-      if (!state.drawing) selectRegion(region.id);
+      if (!state.drawing && !state.suppressClick) selectRegion(region.id);
     });
     rect.addEventListener("keydown", (event) => {
       if (event.key === "Enter" || event.key === " ") {
@@ -314,6 +321,7 @@ function renderEditor() {
   $("protected-terms").value = region?.protected_terms.join("\n") ?? "";
   $("recognition-evaluable").checked = region?.recognition_evaluable !== false;
   $("region-rationale").value = region?.rationale ?? "";
+  renderCrop();
 }
 function render() {
   const active = Boolean(state.current) && !state.saving;
@@ -385,6 +393,7 @@ function updateBox() {
   region.bbox_normalized = box;
   changed();
   overlay();
+  renderCrop();
 }
 function compareKey() {
   return JSON.stringify([
@@ -626,22 +635,144 @@ $("recognition-evaluable").addEventListener("change", () => {
   }
 });
 $("region-form").addEventListener("submit", (event) => event.preventDefault());
+// Viewing never calls changed(): zoom and pan do not edit annotation or attest review.
+function applyView(reset = false) {
+  const image = $("source-image"),
+    stage = $("image-stage"),
+    scroll = $("image-scroll");
+  if (!image.complete || !image.naturalWidth) return;
+  const padding = getComputedStyle(scroll);
+  const horizontal = parseFloat(padding.paddingLeft) + parseFloat(padding.paddingRight);
+  const vertical = parseFloat(padding.paddingTop) + parseFloat(padding.paddingBottom);
+  const before = stage.getBoundingClientRect();
+  const center = [
+    (scroll.scrollLeft + (scroll.clientWidth - horizontal) / 2) / (before.width || 1),
+    (scroll.scrollTop + (scroll.clientHeight - vertical) / 2) / (before.height || 1),
+  ];
+  const width =
+    state.view === "fit"
+      ? Math.max(1, scroll.clientWidth - horizontal)
+      : (image.naturalWidth * state.zoom) / 100;
+  stage.style.width = `${width}px`;
+  if (reset || state.view === "fit") {
+    scroll.scrollLeft = 0;
+    scroll.scrollTop = 0;
+  } else {
+    scroll.scrollLeft = center[0] * width - (scroll.clientWidth - horizontal) / 2;
+    scroll.scrollTop =
+      (center[1] * width * image.naturalHeight) / image.naturalWidth -
+      (scroll.clientHeight - vertical) / 2;
+  }
+  const percent = Math.round((100 * width) / image.naturalWidth);
+  $("zoom-value").textContent = state.view === "fit" ? `Fit · ${percent}%` : `${state.zoom}%`;
+  $("view-zoom").value = String(
+    state.view === "fit" ? Math.max(25, Math.min(400, percent)) : state.zoom,
+  );
+  $("view-zoom").setAttribute(
+    "aria-valuetext",
+    state.view === "fit"
+      ? `Fit to viewport, ${percent} percent of natural pixels`
+      : `${state.zoom} percent of natural pixels`,
+  );
+  $("view-fit").setAttribute("aria-pressed", String(state.view === "fit"));
+  $("view-natural").setAttribute(
+    "aria-pressed",
+    String(state.view !== "fit" && state.zoom === 100),
+  );
+}
+function renderCrop() {
+  const image = $("source-image"),
+    region = selected();
+  $("crop-preview").hidden = !region || !image.complete || !image.naturalWidth;
+  if ($("crop-preview").hidden) return;
+  const [x, y, width, height] = region.bbox_normalized;
+  const sx = Math.min(image.naturalWidth - 1, Math.floor(x * image.naturalWidth));
+  const sy = Math.min(image.naturalHeight - 1, Math.floor(y * image.naturalHeight));
+  const sw = Math.max(
+    1,
+    Math.min(image.naturalWidth, Math.ceil((x + width) * image.naturalWidth)) - sx,
+  );
+  const sh = Math.max(
+    1,
+    Math.min(image.naturalHeight, Math.ceil((y + height) * image.naturalHeight)) - sy,
+  );
+  const scale = Math.min(4, 800 / Math.max(sw, sh));
+  const canvas = $("region-crop");
+  canvas.width = Math.max(1, Math.round(sw * scale));
+  canvas.height = Math.max(1, Math.round(sh * scale));
+  canvas.setAttribute("aria-label", `Unchanged source pixel crop for region ${region.id}`);
+  const context = canvas.getContext("2d");
+  context.imageSmoothingEnabled = false;
+  context.drawImage(image, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+  $("crop-info").textContent =
+    `${region.id} · ${sw} × ${sh} source pixels · ${Math.round(scale * 100)}% display scale. Scroll to inspect the crop.`;
+}
+$("view-fit").addEventListener("click", () => {
+  state.view = "fit";
+  applyView(true);
+});
+$("view-natural").addEventListener("click", () => {
+  state.view = "manual";
+  state.zoom = 100;
+  applyView();
+});
+$("view-zoom").addEventListener("input", () => {
+  state.view = "manual";
+  state.zoom = Number($("view-zoom").value);
+  applyView();
+});
+new ResizeObserver(() => {
+  if (state.view === "fit") applyView();
+}).observe($("image-scroll"));
 $("source-image").addEventListener("load", () => {
   $("image-stage").style.aspectRatio =
     `${$("source-image").naturalWidth}/${$("source-image").naturalHeight}`;
+  for (const id of ["view-fit", "view-natural", "view-zoom"]) $(id).disabled = false;
+  applyView(true);
   overlay();
+  renderCrop();
 });
 $("overlay").addEventListener("pointerdown", (event) => {
-  if (state.drawing && state.current && !state.saving && event.button === 0) {
+  if (event.button !== 0 || state.saving) return;
+  if (state.drawing && state.current) {
     state.drag = point(event);
     $("overlay").setPointerCapture(event.pointerId);
+  } else if (event.pointerType !== "touch") {
+    state.pan = {
+      x: event.clientX,
+      y: event.clientY,
+      left: $("image-scroll").scrollLeft,
+      top: $("image-scroll").scrollTop,
+    };
   }
 });
 $("overlay").addEventListener("pointermove", (event) => {
   if (state.drag) overlay(rectangle(state.drag, point(event)));
+  else if (state.pan) {
+    const dx = event.clientX - state.pan.x,
+      dy = event.clientY - state.pan.y;
+    if (Math.abs(dx) + Math.abs(dy) > 3) {
+      state.suppressClick = true;
+      if (!$("overlay").hasPointerCapture(event.pointerId))
+        $("overlay").setPointerCapture(event.pointerId);
+      $("overlay").classList.add("panning");
+    }
+    $("image-scroll").scrollLeft = state.pan.left - dx;
+    $("image-scroll").scrollTop = state.pan.top - dy;
+  }
 });
+function endPan() {
+  state.pan = null;
+  $("overlay").classList.remove("panning");
+  setTimeout(() => {
+    state.suppressClick = false;
+  }, 0);
+}
 $("overlay").addEventListener("pointerup", (event) => {
-  if (!state.drag) return;
+  if (!state.drag) {
+    endPan();
+    return;
+  }
   const box = rectangle(state.drag, point(event));
   state.drag = null;
   if (box[2] >= 0.005 && box[3] >= 0.005) addRegion(box);
@@ -649,11 +780,13 @@ $("overlay").addEventListener("pointerup", (event) => {
 });
 $("overlay").addEventListener("pointercancel", () => {
   state.drag = null;
+  endPan();
   overlay();
 });
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
     state.drag = null;
+    endPan();
     state.drawing = false;
     render();
     return;
