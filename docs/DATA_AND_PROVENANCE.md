@@ -6,6 +6,8 @@ Every upload receives a random hexadecimal run identifier. Reprocessing creates 
 
 The run table records title, project label, status, creation time, metadata JSON, processing configuration, parent, error state and the immutable result checksum. Project labels are descriptive grouping values in version 0.1.0; they are not foreign keys to a separate project registry.
 
+Database schema 2 additionally anchors `source_sha256` from uploaded request bytes before queueing. Processing verifies the original before and after OCR. A failed run can create a clean child only from that preserved source digest; a legacy failed run without one requires reupload. Queued/running parents must finish before rerunning. Completed legacy runs acquire the database source digest only after their existing recorded evidence has verified successfully.
+
 ## Result schema
 
 `result.json` uses schema identifier `modavis-scriptor.graphics-run/v1`. It contains:
@@ -17,6 +19,7 @@ The run table records title, project label, status, creation time, metadata JSON
 - clipping and OCR-disagreement flags;
 - advisory corpus matches and their evidence rows;
 - processing configuration, runtime versions, model hashes, source hashes and corpus checksum.
+- for new runs, `artifact_manifest` with schema `modavis-scriptor.artifact-manifest/v1` and a filename-to-SHA-256 mapping for all retained processing artifacts (the result itself is anchored in SQLite).
 
 Coordinates refer to `image.png` after EXIF orientation has been applied. Pixel boxes use `[x1, y1, x2, y2]` from the upper-left origin. Normalized boxes use `[x, y, width, height]`.
 
@@ -58,11 +61,18 @@ rNNN-crop.png            evidence crops
 rNNN-ocr.png[.tsv]       configured OCR inputs and outputs
 rNNN-alt.png[.tsv]       alternate OCR inputs and outputs
 source-*.py              executing service source snapshot
+integrity.json           verification coverage and verified artifact digests
 ```
 
 CSV values beginning with spreadsheet formula characters receive a leading apostrophe. JSON preserves literal values and should be used for character-level analysis.
 
 The SVG references `image.png`; keep both files together. The boxes and labels are separate annotations and do not alter the normalized image.
+
+Serving, reviewing, rerunning and exporting a completed run verifies its recorded evidence digests. Missing or changed evidence causes HTTP 409. A bundle uses a verified allowlist; arbitrary files placed in a run directory are not silently exported.
+
+The derived response includes `integrity.coverage`, `verified_files`, `unverified_files` and a note. Coverage is `complete` for a new manifest-bearing run, `frozen-example` for the trusted bundled manifest, or `legacy-recorded-hashes` for an older non-example run. Legacy raw results and reviews are never rewritten. Files with no historical digest cannot be certified after the fact; legacy OCR inputs/TSVs without such digests are excluded from bundles. Create a child run for complete artifact coverage under the current pipeline.
+
+The database schema is versioned independently of the run JSON schema using SQLite `PRAGMA user_version`. Existing compatible 0.1.0 databases are adopted by the initial migration; future schema versions are rejected. Migration tests check preservation of runs, decisions and append-only constraints.
 
 ## Sensitive data
 

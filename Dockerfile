@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM node:22.20.0-bookworm-slim@sha256:b21fe589dfbe5cc39365d0544b9be3f1f33f55f3c86c87a76ff65a02f8f5848e AS build
+FROM node:22.23.4-bookworm-slim@sha256:4b150b48b4116e2a22f2c39cc27025fbf4f153e2078fd3b14d159fdb5c7279da AS build
 
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -9,7 +9,7 @@ RUN npm ci
 COPY . .
 RUN npm run build
 
-FROM node:22.20.0-bookworm-slim@sha256:b21fe589dfbe5cc39365d0544b9be3f1f33f55f3c86c87a76ff65a02f8f5848e AS runtime
+FROM node:22.23.4-bookworm-slim@sha256:4b150b48b4116e2a22f2c39cc27025fbf4f153e2078fd3b14d159fdb5c7279da AS runtime
 
 LABEL org.opencontainers.image.title="MODAVIS Scriptor" \
       org.opencontainers.image.version="0.1.0" \
@@ -17,13 +17,17 @@ LABEL org.opencontainers.image.title="MODAVIS Scriptor" \
       org.opencontainers.image.documentation="https://doi.org/10.5281/zenodo.22284008"
 
 ENV NODE_ENV=production \
-    NO_UPDATE_NOTIFIER=1
+    NO_UPDATE_NOTIFIER=1 \
+    PATH="/app/node_modules/.bin:${PATH}"
 
-RUN npm install --global --omit=optional wrangler@4.128.0 \
-    && mkdir -p /app /data \
-    && chown -R node:node /app /data
+RUN mkdir -p /app /data && chown -R node:node /app /data
 
 WORKDIR /app
+COPY --chown=node:node package.json package-lock.json ./
+USER node
+# Wrangler is a runtime dependency: install its complete tree from the same lock
+# as the build instead of resolving a separate global dependency tree.
+RUN npm ci --omit=dev --no-fund && npm cache clean --force
 COPY --from=build --chown=node:node /app/dist ./dist
 COPY --from=build --chown=node:node /app/LICENSE /app/THIRD_PARTY_NOTICES.md ./
 COPY --from=build --chown=node:node /app/LICENSES ./LICENSES

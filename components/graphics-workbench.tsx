@@ -69,6 +69,10 @@ type Result = {
   metadata: Record<string, string>;
   paradata: Record<string, unknown>;
   review_events: unknown[];
+  integrity?: {
+    coverage: "complete" | "frozen-example" | "legacy-recorded-hashes";
+    unverified_files: string[];
+  };
 };
 const initialConfig: Config = {
   mode: "organ_stops",
@@ -323,6 +327,13 @@ export function GraphicsWorkbench({ initialRunId }: { initialRunId: string }) {
       )}
       {notice && (
         <output className="block rounded-lg bg-teal-soft p-3 text-sm text-teal">{notice}</output>
+      )}
+      {result?.integrity?.coverage === "legacy-recorded-hashes" && (
+        <p role="status" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
+          Historischer Lauf: Original, Bild und Ausschnitte werden anhand der gespeicherten Prüfsummen
+          geprüft. Für ältere OCR-Dateien fehlen Prüfsummen; diese Dateien sind vom Export ausgeschlossen.
+          Für vollständig geprüfte Artefakte einen neuen Lauf anlegen.
+        </p>
       )}
       <section className="surface-panel p-4">
         <div className="grid gap-4 md:grid-cols-[1.4fr_1fr_auto]">

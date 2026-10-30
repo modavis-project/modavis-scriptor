@@ -12,7 +12,7 @@ The browser does not need direct access to the processing container. Port 8010 r
 
 ### Processing service
 
-The Python/FastAPI service performs image normalization, region detection, Tesseract OCR, field parsing, corpus retrieval, review materialization and export. A single background executor limits concurrent inference. At most ten queued or running jobs are accepted, and a run may contain no more than 120 regions.
+The Python/FastAPI service performs image normalization, region detection, Tesseract OCR, field parsing, corpus retrieval, review materialization and export. A single background executor limits concurrent inference. At most ten queued or running jobs are accepted: admission checks and insertion share an immediate SQLite transaction across uploads and reruns. A rejected insertion removes only its newly created folder. A run may contain no more than 120 regions.
 
 The service stores state in `/data`:
 
@@ -37,7 +37,11 @@ The service stores state in `/data`:
 
 SQLite stores run records and append-only review events. Database triggers reject updates and deletions of review events. A `UNIQUE(run_id, region_id, version)` constraint and `expected_version` request field prevent a reviewer from silently overwriting a newer decision.
 
-`result.json` is immutable after a run completes. Its SHA-256 is stored in the run table and verified before review or export. Reviewer decisions are materialized at read time and returned separately from the immutable result.
+`result.json` is immutable after a run completes. Its SHA-256 is stored in the run table and verified before review or export. New results contain an artifact manifest covering the original, normalized image, crops, OCR inputs/outputs and executing source snapshots. Evidence-consuming operations verify recorded digests and reject missing or changed files with HTTP 409. Bundles include only verified artifacts. Reviewer decisions are materialized at read time and returned separately from the immutable result.
+
+The frozen example uses its trusted file manifest. Older non-example results retain their original bytes and use the hashes they already recorded; OCR artifacts without historical hashes are explicitly listed as unverified and excluded from exports. Their integrity cannot be established retroactively. The response and research bundle expose verification coverage.
+
+SQLite `PRAGMA user_version` selects the ordered schema migration. The initial migration validates/adopts the existing 0.1.0 structure and preserves its rows and append-only triggers. A database with a newer unsupported schema is rejected rather than modified. Back up persistent data before upgrades.
 
 This protects against accidental application-level replacement. It is not a cryptographic audit system against an administrator who can modify both the files and database. Long-term preservation requires externally stored checksums or a signed archival package.
 

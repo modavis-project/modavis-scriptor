@@ -1,8 +1,6 @@
 """CPU-only scene-label OCR; independent of the retrieval corpus during recognition."""
 import csv
-import hashlib
 import io
-import json
 import platform
 import re
 import shutil
@@ -16,12 +14,23 @@ import cv2
 import numpy as np
 from PIL import Image, ImageOps
 
+from evidence import build_manifest, sha256
+
 VERSION = "modavis-scriptor-ocr-0.1.0"
 Image.MAX_IMAGE_PIXELS = 40_000_000
 
 
-def sha256(path):
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+def tessdata_directory():
+    """Ask the selected executable for its effective default model directory."""
+    completed = subprocess.run(["tesseract", "--list-langs"], check=True, capture_output=True, text=True, timeout=10)
+    header = completed.stdout + "\n" + completed.stderr
+    match = re.search(r'List of available languages in (.+?) \(\d+\):', header)
+    if not match:
+        raise RuntimeError("Tesseract did not report its active tessdata directory")
+    path = Path(match.group(1).strip().strip('"'))
+    if not path.is_dir():
+        raise RuntimeError("Tesseract reported an unavailable tessdata directory")
+    return path
 
 
 def normalize(source, destination):
@@ -176,9 +185,9 @@ def process_image(folder, config, catalogue):
                         "raw_text": view["text"], "parsed": parsed, "ocr": view, "alternative_ocr": alt,
                         "ocr_disagreement": view["text"] != alt["text"], "clipped": clipped,
                         "candidates": candidates, "crop_sha256": sha256(folder / f"{region_id}-crop.png")})
-    models = {"fast/"+p.name: sha256(p) for p in sorted(Path("/usr/share/tesseract-ocr/5/tessdata").glob("*.traineddata"))}
+    models = {"fast/"+p.name: sha256(p) for p in sorted(tessdata_directory().glob("*.traineddata"))}
     models.update({"best/"+p.name:sha256(p) for p in sorted((Path(__file__).parent / "models/best").glob("*.traineddata"))})
-    return {"schema": "modavis-scriptor.graphics-run/v1", "regions": results,
+    result = {"schema": "modavis-scriptor.graphics-run/v1", "regions": results,
             "image": {"width": width, "height": height, "original": original, "sha256": sha256(folder / "original"), "normalized_sha256": sha256(image_path),
                       "coordinates": "EXIF-normalized image; top-left origin; bbox [x1,y1,x2,y2] in pixels; normalized [x,y,width,height]; no perspective warp"},
             "paradata": {"pipeline_version": VERSION, "config": config, "processed_at": datetime.now(timezone.utc).isoformat(), "duration_seconds": round(time.monotonic()-started,2),
@@ -190,3 +199,6 @@ def process_image(folder, config, catalogue):
                          "catalogue_sha256": sha256(catalogue.path) if config["mode"] == "organ_stops" else None,
                          "policy": "Image evidence first. Corpus advisory only; no automatic replacements. Similarity and OCR scores are not calibrated probabilities. All regions initially unreviewed.",
                          "limitations": ["Light-face heuristic can miss dark, reflective or irregular labels.", "No automatic organ identification or division assignment.", "Pitch/rank strings are not normalized to feet or expanded.", "General graphics mode extracts visible text, not a semantic description of non-text artwork.", "Partially visible controls may be incomplete. Detection coverage requires visual review."]}}
+
+    result["artifact_manifest"] = build_manifest(folder, result)
+    return result

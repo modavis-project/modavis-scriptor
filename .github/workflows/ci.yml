@@ -8,29 +8,36 @@ permissions:
   contents: read
 
 jobs:
-  web:
+  development-readiness:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: npm
-      - run: npm ci
-      - run: npm run lint
-      - run: npx tsc --noEmit
-      - run: npm run build
-
-  graphics-service:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v6
+      - uses: actions/setup-python@v5
         with:
-          context: services/graphics
-          push: false
-          load: true
-          tags: modavis-scriptor-graphics:test
-      - run: docker run --detach --name graphics-test --publish 127.0.0.1:8310:8010 modavis-scriptor-graphics:test
-      - run: python3 scripts/graphics/test-api.py http://127.0.0.1:8310
+          python-version: "3.12"
+      - uses: docker/setup-buildx-action@v3
+      - run: npm ci
+      - name: Lint, types, production build, dependency audit
+        run: npm run check
+      - name: Audit locked Python dependencies
+        run: |
+          python -m pip install pip-audit==2.10.1
+          pip-audit --requirement services/graphics/requirements.lock --disable-pip --no-deps --progress-spinner off
+      - name: Verify frozen evidence, models and corpus
+        run: python3 scripts/graphics/verify-assets.py
+      - name: Evaluation scorer regressions
+        run: npm run test:evaluation
+      - run: npx playwright install --with-deps chromium
+      - name: Disposable backend, OCR, API, proxy and browser integration
+        run: python3 scripts/dev/validate.py
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: browser-failure-evidence
+          path: test-results/
+          if-no-files-found: ignore

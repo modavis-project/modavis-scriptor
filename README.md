@@ -81,26 +81,22 @@ The complete source SQLite is not committed. `scripts/graphics/import-modavis.py
 
 ## Development checks
 
-Node.js 22.13 or newer is required for the web application. Tesseract is provided by the graphics container.
+Use Node.js 22.23.4 (`.nvmrc`). Tesseract and Python are provided by the graphics container.
 
 ```bash
 npm ci
-npm run lint
-npx tsc --noEmit
-npm run build
-docker compose build
-docker compose config --quiet
+npm run doctor
+npm run check
+npm run test:evaluation
+npx playwright install chromium
+npm run test:integration
 ```
 
-Run the read-only detector regression inside the built graphics image:
+`check` runs lint, TypeScript, the production build and dependency auditing. `test:integration` builds a disposable stack on free loopback ports, checks backend integrity and migrations, runs fresh OCR/upload tests and Chromium review tests, then removes only that test stack. It never mounts the research volume.
 
-```bash
-docker run --rm -e PYTHONPATH=/app \
-  --mount "type=bind,source=$PWD/scripts/graphics/test-pipeline.py,target=/checks.py,readonly" \
-  --entrypoint python modavis-scriptor-graphics:0.1.0 /checks.py
-```
+For frontend reload and separate backend development data, see [`docs/INSTALLATION.md`](docs/INSTALLATION.md). That setup uses ports 3400/8410 and a separate Compose project.
 
-The API integration test writes review events and therefore refuses the normal ports. Instructions for an isolated test instance are in [`docs/VALIDATION.md`](docs/VALIDATION.md).
+Individual checks and their boundaries are described in [`docs/VALIDATION.md`](docs/VALIDATION.md). Mutation tests require an explicitly disposable service and refuse the usual research ports.
 
 ## Repository documentation
 
@@ -111,6 +107,8 @@ The API integration test writes review events and therefore refuses the normal p
 - [`docs/DATA_AND_PROVENANCE.md`](docs/DATA_AND_PROVENANCE.md): schemas, fixity, event history and export contents
 - [`docs/API.md`](docs/API.md): endpoints and request examples
 - [`docs/VALIDATION.md`](docs/VALIDATION.md): executed checks and limits of the example
+- [`docs/ROADMAP.md`](docs/ROADMAP.md): next milestone, acceptance criteria and remaining research work
+- [`docs/EVALUATION.md`](docs/EVALUATION.md): held-out annotation protocol and OCR scoring
 - [`docs/CITATION_AND_RIGHTS.md`](docs/CITATION_AND_RIGHTS.md): software, dataset and photograph citations
 - [`SECURITY.md`](SECURITY.md): deployment boundary and vulnerability reporting
 

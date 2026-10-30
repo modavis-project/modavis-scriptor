@@ -1,11 +1,10 @@
 """Local research image service. SQLite audit log and original evidence survive restarts."""
 import csv
+import hashlib
 import io
 import json
 import os
 import shutil
-import sqlite3
-import threading
 import uuid
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
@@ -16,18 +15,19 @@ from typing import Literal
 from xml.sax.saxutils import escape
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import Response
 from pydantic import BaseModel, Field, model_validator
 
 from corpus import Catalogue
 from annotations import number_anchor
 from pipeline import normalize, process_image, sha256
+from database import SCHEMA_VERSION, connect, migrate
+from evidence import IntegrityError, verified_bytes, verify
 
 ROOT = Path(__file__).parent
 DATA = Path(os.environ.get("GRAPHICS_DATA", ROOT / "data"))
 DATA.mkdir(parents=True, exist_ok=True)
 POOL = ThreadPoolExecutor(max_workers=1)
-LOCK = threading.Lock()
 CATALOGUE = Catalogue()
 
 
@@ -36,10 +36,7 @@ def now():
 
 
 def connection():
-    db = sqlite3.connect(DATA / "graphics.sqlite", timeout=30)
-    db.row_factory = sqlite3.Row
-    db.execute("PRAGMA foreign_keys=ON")
-    return db
+    return connect(DATA / "graphics.sqlite")
 
 
 class Config(BaseModel):
@@ -88,7 +85,13 @@ def execute(run_id):
         row = db.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
         db.execute("UPDATE runs SET status='running',error=NULL WHERE id=?", (run_id,))
     try:
+        if not row["source_sha256"]:
+            raise IntegrityError("No preserved source checksum for this legacy run; re-upload the original image before processing")
+        verified_bytes(folder, "original", row["source_sha256"])
         result = process_image(folder, json.loads(row["config"]), CATALOGUE)
+        verified_bytes(folder, "original", row["source_sha256"])
+        if result["image"]["sha256"] != row["source_sha256"]:
+            raise IntegrityError("Processed source checksum conflicts with the preserved upload")
         result["metadata"] = json.loads(row["metadata"])
         result["run_id"] = run_id
         (folder / "result.json").write_text(json.dumps(result, ensure_ascii=False, indent=2))
@@ -102,20 +105,14 @@ def execute(run_id):
 @asynccontextmanager
 async def lifespan(_app):
     with connection() as db:
-        db.executescript("""
-        CREATE TABLE IF NOT EXISTS runs(id TEXT PRIMARY KEY,title TEXT NOT NULL,project TEXT NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL,metadata TEXT NOT NULL,config TEXT NOT NULL,parent_id TEXT,error TEXT,result_sha256 TEXT);
-        CREATE TABLE IF NOT EXISTS review_events(id INTEGER PRIMARY KEY,run_id TEXT NOT NULL REFERENCES runs(id),region_id TEXT NOT NULL,version INTEGER NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL,UNIQUE(run_id,region_id,version));
-        CREATE INDEX IF NOT EXISTS review_lookup ON review_events(run_id,region_id,version);
-        CREATE TRIGGER IF NOT EXISTS review_no_update BEFORE UPDATE ON review_events BEGIN SELECT RAISE(ABORT,'Audit events are append-only'); END;
-        CREATE TRIGGER IF NOT EXISTS review_no_delete BEFORE DELETE ON review_events BEGIN SELECT RAISE(ABORT,'Audit events are append-only'); END;
-        """)
+        migrate(db)
         seed = "example-organ-stops-v1"
         if not db.execute("SELECT 1 FROM runs WHERE id=?", (seed,)).fetchone():
             folder = DATA / seed
             folder.mkdir(exist_ok=True)
             shutil.copyfile(ROOT / "example/Organ-stops.jpg", folder / "original")
             metadata = json.loads((ROOT / "example/source.json").read_text())
-            db.execute("INSERT INTO runs(id,title,project,status,created_at,metadata,config) VALUES(?,?,?,?,?,?,?)", (seed,metadata["title"],"Organ-stop images","queued",now(),json.dumps(metadata),Config().model_dump_json()))
+            db.execute("INSERT INTO runs(id,title,project,status,created_at,metadata,config,source_sha256) VALUES(?,?,?,?,?,?,?,?)", (seed,metadata["title"],"Organ-stop images","queued",now(),json.dumps(metadata),Config().model_dump_json(),sha256(ROOT / "example/Organ-stops.jpg")))
             snapshot = ROOT / "example/processed"
             if (snapshot / "result.json").exists():
                 manifest = json.loads((ROOT / "example/seed-manifest.json").read_text())
@@ -124,17 +121,7 @@ async def lifespan(_app):
                     assert Path(name).name == name and sha256(snapshot/name) == digest, "Frozen example checksum mismatch"
                     shutil.copyfile(snapshot/name,folder/name)
                 frozen = json.loads((folder/"result.json").read_text())
-                db.execute("UPDATE runs SET status='completed',config=?,result_sha256=? WHERE id=?", (json.dumps(frozen["paradata"]["config"]),sha256(folder/"result.json"),seed))
-        # Supplement an already-seeded example with verified source snapshots, never replace evidence.
-        manifest_path = ROOT / "example/seed-manifest.json"
-        if manifest_path.exists():
-            manifest = json.loads(manifest_path.read_text())
-            folder = DATA / seed
-            if (folder/"result.json").exists() and sha256(folder/"result.json") == manifest["files"]["result.json"]:
-                for name,digest in manifest["files"].items():
-                    if name.startswith("source-") and not (folder/name).exists():
-                        assert Path(name).name == name and sha256(ROOT/"example/processed"/name) == digest
-                        shutil.copyfile(ROOT/"example/processed"/name,folder/name)
+                db.execute("UPDATE runs SET status='completed',config=?,result_sha256=?,source_sha256=? WHERE id=?", (json.dumps(frozen["paradata"]["config"]),sha256(folder/"result.json"),frozen["image"]["sha256"],seed))
         pending = [r[0] for r in db.execute("SELECT id FROM runs WHERE status IN ('queued','running')")]
         db.execute("UPDATE runs SET status='queued' WHERE status='running'")
     for run_id in pending:
@@ -173,10 +160,28 @@ def result_for(run_id):
     row = run_record(run_id)
     if row["status"] != "completed":
         raise HTTPException(409, "Run is not completed")
-    path = DATA / run_id / "result.json"
-    if sha256(path) != row["result_sha256"]:
-        raise HTTPException(409, "Immutable result checksum mismatch. Restore evidence before continuing.")
-    return json.loads(path.read_text())
+    folder = DATA / run_id
+    try:
+        raw = verified_bytes(folder, "result.json", row["result_sha256"])
+        result = json.loads(raw)
+        if result["run_id"] != run_id:
+            raise IntegrityError("Immutable result run identifier mismatch")
+        trusted = None
+        if run_id == "example-organ-stops-v1":
+            manifest = json.loads((ROOT / "example/seed-manifest.json").read_text())
+            if manifest["run_id"] == run_id and manifest["files"]["result.json"] == row["result_sha256"]:
+                trusted = manifest["files"]
+        result["integrity"] = verify(folder, result, trusted)
+        source_digest = result["image"]["sha256"]
+        if row["source_sha256"] is not None and row["source_sha256"] != source_digest:
+            raise IntegrityError("Preserved upload checksum conflicts with immutable result")
+        if row["source_sha256"] is None:
+            # Adopt a digest anchored in the preserved result only after verifying the source.
+            with connection() as db:
+                db.execute("UPDATE runs SET source_sha256=? WHERE id=? AND source_sha256 IS NULL", (source_digest, run_id))
+        return result
+    except (IntegrityError, OSError, ValueError, KeyError, TypeError) as error:
+        raise HTTPException(409, f"Evidence integrity check failed: {error}. Restore evidence before continuing.") from error
 
 
 def materialize(run_id):
@@ -231,7 +236,8 @@ def markdown(result, raw=False):
 
 @app.get("/health")
 def health():
-    return {"ok": True, "corpus": CATALOGUE.report, "local_only": True}
+    return {"ok": True, "corpus": CATALOGUE.report, "local_only": True, "database_schema": SCHEMA_VERSION,
+            "disposable_test_instance": os.environ.get("SCRIPTOR_DISPOSABLE_TEST") == "1"}
 
 
 @app.get("/runs")
@@ -244,6 +250,20 @@ def runs():
 def get_run(run_id: str):
     row = run_record(run_id)
     return {"run": {**row, "config": json.loads(row["config"]), "metadata": json.loads(row["metadata"])}, "result": materialize(run_id) if row["status"] == "completed" else None}
+
+
+def admit_run(run_id, folder, title, project, metadata, config, source_digest, parent_id=None):
+    """Reserve capacity and insert together; callers own this newly created UUID folder."""
+    try:
+        with connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if db.execute("SELECT count(*) FROM runs WHERE status IN ('queued','running')").fetchone()[0] >= 10:
+                raise HTTPException(429, "Processing queue is full; wait for a run to finish")
+            db.execute("INSERT INTO runs(id,title,project,status,created_at,metadata,config,parent_id,source_sha256) VALUES(?,?,?,?,?,?,?,?,?)", (run_id, title, project, "queued", now(), metadata, config, parent_id, source_digest))
+    except Exception:
+        # Never touch a parent folder or any previously admitted run on rejection.
+        shutil.rmtree(folder)
+        raise
 
 
 @app.post("/runs", status_code=202)
@@ -275,8 +295,7 @@ async def create_run(file: UploadFile = File(...), title: str = Form(..., max_le
         shutil.rmtree(folder)
         raise HTTPException(422, f"Invalid image: {error}") from error
     meta.update(title=title.strip(), original_filename=Path(file.filename or "image").name)
-    with connection() as db:
-        db.execute("INSERT INTO runs(id,title,project,status,created_at,metadata,config) VALUES(?,?,?,?,?,?,?)", (run_id,title.strip(),project.strip(),"queued",now(),json.dumps(meta),settings.model_dump_json()))
+    admit_run(run_id, folder, title.strip(), project.strip(), json.dumps(meta), settings.model_dump_json(), hashlib.sha256(body).hexdigest())
     POOL.submit(execute,run_id)
     return {"id": run_id, "status": "queued"}
 
@@ -284,34 +303,48 @@ async def create_run(file: UploadFile = File(...), title: str = Form(..., max_le
 @app.post("/runs/{run_id}/rerun", status_code=202)
 def rerun(run_id: str, config: Config):
     parent = run_record(run_id)
-    with LOCK:
-        with connection() as db:
-            if db.execute("SELECT count(*) FROM runs WHERE status IN ('queued','running')").fetchone()[0] >= 10:
-                raise HTTPException(429,"Processing queue is full")
-        child = uuid.uuid4().hex
-        folder = DATA / child
-        folder.mkdir()
-        shutil.copyfile(DATA / run_id / "original", folder / "original")
-        with connection() as db:
-            db.execute("INSERT INTO runs(id,title,project,status,created_at,metadata,config,parent_id) VALUES(?,?,?,?,?,?,?,?)", (child,parent["title"],parent["project"],"queued",now(),parent["metadata"],config.model_dump_json(),run_id))
-        POOL.submit(execute,child)
+    if parent["status"] in {"queued", "running"}:
+        raise HTTPException(409, "Processing is still queued or running; wait for it to finish before reprocessing")
+    if parent["status"] == "completed":
+        source_digest = result_for(run_id)["image"]["sha256"]
+    else:
+        source_digest = parent["source_sha256"]
+        if not source_digest:
+            raise HTTPException(409, "This legacy failed run has no preserved source checksum; re-upload the original image to retry safely")
+    try:
+        original = verified_bytes(DATA / run_id, "original", source_digest)
+    except IntegrityError as error:
+        raise HTTPException(409, str(error)) from error
+    child = uuid.uuid4().hex
+    folder = DATA / child
+    folder.mkdir()
+    (folder / "original").write_bytes(original)
+    admit_run(child, folder, parent["title"], parent["project"], parent["metadata"], config.model_dump_json(), source_digest, run_id)
+    POOL.submit(execute,child)
     return {"id": child, "status": "queued"}
 
 
 @app.get("/runs/{run_id}/image")
 def image(run_id: str):
-    run_record(run_id)
-    path = DATA / run_id / "image.png"
-    if not path.exists():
-        raise HTTPException(409,"Image normalization is pending")
-    return FileResponse(path,media_type="image/png")
+    result = result_for(run_id)
+    try:
+        content = verified_bytes(DATA / run_id, "image.png", result["image"]["normalized_sha256"])
+    except IntegrityError as error:
+        raise HTTPException(409, str(error)) from error
+    return Response(content, media_type="image/png")
 
 
 @app.get("/runs/{run_id}/regions/{region_id}/crop")
 def crop(run_id: str, region_id: str):
-    if not any(r["id"] == region_id for r in result_for(run_id)["regions"]):
+    result = result_for(run_id)
+    region = next((r for r in result["regions"] if r["id"] == region_id), None)
+    if region is None:
         raise HTTPException(404,"Region not found")
-    return FileResponse(DATA / run_id / f"{region_id}-crop.png",media_type="image/png")
+    try:
+        content = verified_bytes(DATA / run_id, f"{region_id}-crop.png", region["crop_sha256"])
+    except IntegrityError as error:
+        raise HTTPException(409, str(error)) from error
+    return Response(content, media_type="image/png")
 
 
 @app.patch("/runs/{run_id}/regions/{region_id}/review")
@@ -361,13 +394,16 @@ def export(run_id: str, format: Literal["json","markdown","raw-markdown","csv","
     if format == "bundle":
         stream=io.BytesIO()
         with zipfile.ZipFile(stream,"w",zipfile.ZIP_DEFLATED) as archive:
-            for name,value in {"reviewed.json":data,"reviewed.md":result["markdown"],"raw.md":result["raw_markdown"],"table.csv":csv_data(result),"regions.svg":annotated_svg(result),"source.json":json.dumps(result["metadata"],ensure_ascii=False,indent=2)}.items():
+            for name,value in {"reviewed.json":data,"reviewed.md":result["markdown"],"raw.md":result["raw_markdown"],"table.csv":csv_data(result),"regions.svg":annotated_svg(result),"source.json":json.dumps(result["metadata"],ensure_ascii=False,indent=2),"integrity.json":json.dumps(result["integrity"],ensure_ascii=False,indent=2)}.items():
                 archive.writestr(name,value)
             folder=DATA/run_id
-            for path in folder.iterdir():
-                if path.is_file():
-                    archive.write(path,path.name)
-            archive.writestr("README.txt","MODAVIS Scriptor research export. Original evidence and immutable result.json are separate from reviewed.json. regions.svg references image.png. Box numbers are left of each upper-left corner. OCR is not ground truth. CSV has spreadsheet formula protection; JSON preserves literals. Credit and licensing are in source.json and reviewed.json. Adapted example photograph: Tucker501, CC BY-SA 4.0; MODAVIS data arrangement: CC BY 4.0.\n")
+            files = {**result["integrity"]["verified_files"], "result.json": result["immutable_result_sha256"]}
+            try:
+                for name, digest in files.items():
+                    archive.writestr(name, verified_bytes(folder, name, digest))
+            except IntegrityError as error:
+                raise HTTPException(409, str(error)) from error
+            archive.writestr("README.txt","MODAVIS Scriptor research export. Original evidence and immutable result.json are separate from reviewed.json. regions.svg references image.png. Box numbers are left of each upper-left corner. OCR is not ground truth. CSV has spreadsheet formula protection; JSON preserves literals. Credit and licensing are in source.json and reviewed.json. integrity.json describes verification coverage; legacy OCR artifacts without recorded checksums are excluded. Adapted example photograph: Tucker501, CC BY-SA 4.0; MODAVIS data arrangement: CC BY 4.0.\n")
         return Response(stream.getvalue(),media_type="application/zip",headers={"Content-Disposition":f'attachment; filename="{run_id}-research.zip"'})
     media,ext,value={"json":("application/json","json",data),"markdown":("text/markdown","md",result["markdown"]),"raw-markdown":("text/markdown","raw.md",result["raw_markdown"]),"csv":("text/csv","csv",csv_data(result))}[format]
     return Response(value,media_type=media,headers={"Content-Disposition":f'attachment; filename="{run_id}.{ext}"'})
