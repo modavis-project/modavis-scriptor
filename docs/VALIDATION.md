@@ -36,8 +36,10 @@ Executed locally on macOS / Apple Silicon with Node 22.23.4, Python 3.12.12, Tes
 | Chromium review, persistence, raw OCR, download and narrow viewport | Passed |
 | Evaluation scorer algorithms and input validation | 17 tests passed |
 | Docker and native prerequisite checks | Passed with the pinned Node runtime |
+| Fresh web/graphics images and complete isolated Docker suite | Passed on GitHub-hosted Ubuntu amd64 |
+| IPv4 frontend development routes, API proxy and seeded example | Passed |
 
-The native integration run used temporary data and free loopback ports, then removed its own processes. Frozen evidence, corpus and bundled models remain unchanged. Updated GitHub CI is configured to run the complete checks; these local results do not claim a new remote CI run or current amd64 validation.
+The native integration run used temporary data and free loopback ports, then removed its own processes. Frozen evidence, corpus and bundled models remain unchanged. The [clean Ubuntu CI run](https://github.com/modavis-project/modavis-scriptor/actions/runs/41053258260) additionally passed both fresh Docker builds, 27 backend tests, real OCR, multipart upload/API checks, Chromium acceptance and isolated cleanup. The runtime image includes the system CA store required by Workerd. Current Linux arm64 container validation and Windows/WSL remain separate from these native/amd64 results.
 
 The local Docker Desktop backing storage is an APFS sparse disk image on an external ExFAT volume that was 96% full. Cold builds showed sustained VM I/O stalls despite low CPU/memory pressure and apparently ample virtual free space. This is a storage-maintenance concern rather than an application performance benchmark. The native development/test path is available independently; plan storage cleanup or migration before relying on repeated heavy cold builds.
 

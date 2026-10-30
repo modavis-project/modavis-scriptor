@@ -9,7 +9,7 @@
   },
   "type": "module",
   "scripts": {
-    "dev": "vinext dev",
+    "dev": "vinext dev --host 127.0.0.1",
     "build": "vinext build",
     "start": "wrangler dev --config dist/server/wrangler.json",
     "lint": "oxlint",

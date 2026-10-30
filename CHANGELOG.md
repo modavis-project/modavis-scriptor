@@ -9,6 +9,7 @@
 - Anchored upload checksums before processing, restored verified failed-run retries, and made upload/rerun queue admission transactional.
 - Added fixture/corpus/model checks, fresh-upload OCR integration, integrity/migration regressions and Chromium review tests to CI.
 - Added isolated development/test stacks, prerequisite diagnostics, a development roadmap and evaluation tooling.
+- Bound the frontend development server explicitly to IPv4 loopback to match the documented local URL.
 
 ## 0.1.0 - 2026-09-03
 
