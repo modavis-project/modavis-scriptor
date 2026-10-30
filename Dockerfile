@@ -20,7 +20,10 @@ ENV NODE_ENV=production \
     NO_UPDATE_NOTIFIER=1 \
     PATH="/app/node_modules/.bin:${PATH}"
 
-RUN mkdir -p /app /data && chown -R node:node /app /data
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /app /data && chown -R node:node /app /data
 
 WORKDIR /app
 COPY --chown=node:node package.json package-lock.json ./
