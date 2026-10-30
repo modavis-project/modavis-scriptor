@@ -1,6 +1,9 @@
 """Verify recorded evidence without inventing checksums for unverifiable history."""
 import hashlib
 import re
+import os
+import stat
+from contextlib import contextmanager
 from pathlib import Path
 
 MANIFEST_SCHEMA = "modavis-scriptor.artifact-manifest/v1"
@@ -44,29 +47,67 @@ def recorded_files(result):
     return files
 
 
-def verified_bytes(folder, name, digest):
-    """Read once, reject links, and verify the exact bytes that will be served/exported."""
-    if not (name == "result.json" or ARTIFACT.fullmatch(name)) or not DIGEST.fullmatch(digest or ""):
+CHUNK_SIZE = 256 * 1024
+
+
+@contextmanager
+def artifact_stream(folder, name):
+    if not (name == "result.json" or ARTIFACT.fullmatch(name)):
         raise IntegrityError("Invalid artifact manifest entry")
-    path = folder / name
+    path = Path(folder) / name
+    descriptor = None
     try:
-        if path.is_symlink() or not path.is_file():
-            raise IntegrityError(f"Evidence is missing or not a regular file: {name}")
-        content = path.read_bytes()
+        if path.is_symlink():
+            raise IntegrityError(f"Evidence is not a regular file: {name}")
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise IntegrityError(f"Evidence is not a regular file: {name}")
+        with os.fdopen(descriptor, "rb") as stream:
+            descriptor = None
+            yield stream
     except OSError as error:
         raise IntegrityError(f"Evidence is unavailable: {name}") from error
-    if hashlib.sha256(content).hexdigest() != digest:
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def verified_copy(folder, name, digest, destination=None):
+    """Hash while copying bounded chunks; destination is unpublished until success."""
+    if not DIGEST.fullmatch(digest or ""):
+        raise IntegrityError("Invalid artifact manifest entry")
+    checksum = hashlib.sha256()
+    with artifact_stream(folder, name) as source:
+        before = os.fstat(source.fileno())
+        while chunk := source.read(CHUNK_SIZE):
+            checksum.update(chunk)
+            if destination is not None:
+                destination.write(chunk)
+        after = os.fstat(source.fileno())
+    if (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (after.st_size, after.st_mtime_ns, after.st_ctime_ns) or checksum.hexdigest() != digest:
         raise IntegrityError(f"Evidence checksum mismatch: {name}")
-    return content
+    return before.st_size
+
+
+def verify_file(folder, name, digest):
+    return verified_copy(folder, name, digest)
+
+
+def verified_bytes(folder, name, digest):
+    """Small structured results only; large binary artifacts use verified_copy."""
+    import io
+    stream = io.BytesIO()
+    verified_copy(folder, name, digest, stream)
+    return stream.getvalue()
 
 
 def build_manifest(folder, result):
     files = recorded_files(result)
     for name, digest in files.items():
         if digest is not None:
-            verified_bytes(folder, name, digest)
+            verify_file(folder, name, digest)
         files[name] = sha256(folder / name)
-        verified_bytes(folder, name, files[name])
+        verify_file(folder, name, files[name])
     return {"schema": MANIFEST_SCHEMA, "files": files}
 
 
@@ -91,7 +132,7 @@ def verify(folder, result, trusted_files=None):
         for name, digest in files.items():
             if recorded[name] is not None and recorded[name] != digest:
                 raise IntegrityError(f"Conflicting evidence digest: {name}")
-            verified_bytes(folder, name, digest)
+            verify_file(folder, name, digest)
         unverified = sorted(set(recorded) - set(files))
         return {"coverage": coverage, "verified_files": dict(files), "unverified_files": unverified,
                 "note": "Legacy OCR inputs/TSVs without recorded hashes are excluded from exports; historical integrity cannot be established." if unverified else "All recorded artifacts verified against preserved checksums."}

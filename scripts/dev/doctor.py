@@ -9,6 +9,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+from environment import docker_command, native_environment, native_python, python312
+from storage import docker_storage, physical_storage
+
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -18,7 +21,9 @@ def main():
     parser.add_argument("--json", action="store_true", help="emit a machine-readable report")
     args = parser.parse_args()
     checks = []
-    environment = os.environ.copy()
+    warnings = []
+    diagnostics = {"workspace_storage": physical_storage(ROOT)}
+    environment = native_environment() if args.native else os.environ.copy()
     managed_models = ROOT / "services/graphics/.venv/tessdata"
     if args.native and managed_models.is_dir():
         environment.setdefault("TESSDATA_PREFIX", str(managed_models))
@@ -42,8 +47,8 @@ def main():
     check("Bundled assets", [sys.executable, "scripts/graphics/verify-assets.py"],
           "Bundled fixture, corpus, or model verification failed; run npm run test:assets for details.")
     if args.native:
-        interpreter = ROOT / "services/graphics/.venv/bin/python"
-        python = str(interpreter) if interpreter.exists() else shutil.which("python3.12") or sys.executable
+        interpreter = native_python()
+        python = str(interpreter) if interpreter.exists() else python312() or sys.executable
         check("Python 3.12", [python, "-c", "import sys; print(sys.version.split()[0]); sys.exit(sys.version_info[:2] != (3,12))"],
               "Create services/graphics/.venv with Python 3.12 (see docs/INSTALLATION.md).")
         check("Python dependencies", [python, "-c", "import cv2, numpy, PIL, rapidfuzz, fastapi, uvicorn, multipart; print('Imports passed')"],
@@ -53,16 +58,30 @@ def main():
         check("System OCR languages", ["tesseract", "--list-langs"], "Install both eng and deu language models.",
               lambda text: {"eng", "deu"} <= set(text.splitlines()))
     else:
-        check("Docker daemon", ["docker", "version", "--format", "{{.Server.Version}}"],
+        docker = docker_command(environment)
+        check("Docker daemon", docker + ["version", "--format", "{{.Server.Version}}"],
               "Start Docker Desktop/Engine and wait until docker version returns a server version.")
-        check("Docker Compose", ["docker", "compose", "version", "--short"], "Install Docker Compose v2 or newer.")
-        check("Compose configuration", ["docker", "compose", "config", "--quiet"], "Fix the Compose configuration.")
+        check("Docker Compose", docker + ["compose", "version", "--short"], "Install Docker Compose v2 or newer.")
+        check("Compose configuration", docker + ["compose", "config", "--quiet"], "Fix the Compose configuration.")
+        diagnostics["docker_storage"] = docker_storage(docker)
+        backing = diagnostics["docker_storage"].get("physical_storage", {})
+        if backing.get("used_percent", 0) >= 90:
+            warnings.append(f"Docker backing filesystem is {backing['used_percent']}% full ({backing['free_gib']} GiB physically free). "
+                            "Virtual disk free space is not backing capacity. Use the isolated internal runtime or plan storage maintenance.")
+        if len(backing.get("backing_chain", [])) > 1:
+            warnings.append("Docker storage is nested in a mounted disk image; inspect its physical backing before heavy builds.")
+    workspace_free = diagnostics["workspace_storage"]["free_gib"]
+    checks.append({"check": "Workspace physical free space", "ok": workspace_free >= 8,
+                   "detail": f"{workspace_free} GiB free; at least 8 GiB required for development artifacts."})
     passed = all(item["ok"] for item in checks)
     if args.json:
-        print(json.dumps({"ok": passed, "mode": "native" if args.native else "docker", "checks": checks}, indent=2))
+        print(json.dumps({"ok": passed, "mode": "native" if args.native else "docker", "checks": checks,
+                          "warnings": warnings, "diagnostics": diagnostics}, indent=2))
     else:
         for item in checks:
             print(f"{'PASS' if item['ok'] else 'FAIL'} {item['check']}: {item['detail'] or 'OK'}")
+        for warning in warnings:
+            print("WARN " + warning)
         print("Ready for development checks." if passed else "Resolve the failed prerequisites above.")
     return 0 if passed else 1
 

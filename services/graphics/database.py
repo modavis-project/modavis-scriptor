@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 import re
 import sqlite3
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 TABLE_COLUMNS = {
     "runs": {"id", "title", "project", "status", "created_at", "metadata", "config", "parent_id", "error", "result_sha256"},
     "review_events": {"id", "run_id", "region_id", "version", "payload", "created_at"},
@@ -38,19 +38,25 @@ def normalized_sql(sql):
     return re.sub(r"\s+", "", sql or "").rstrip(";").casefold()
 
 
-def validate_legacy(db):
+def validate_schema(db, version, allow_empty=False):
+    expected_columns = {table: set(columns) for table, columns in TABLE_COLUMNS.items()}
+    if version >= 2:
+        expected_columns["runs"].add("source_sha256")
+    if version >= 3:
+        expected_columns["runs"].update({"artifact_path", "attempt_id"})
+    expected_tables = set(expected_columns) | ({"schema_migrations"} if version else set())
     tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")}
-    if not tables:
+    if not tables and allow_empty:
         return
-    if tables != set(TABLE_COLUMNS):
+    if tables != expected_tables:
         raise RuntimeError("Unrecognized unversioned database; migration refused without changing data")
-    for table, expected in TABLE_COLUMNS.items():
+    for table, expected in expected_columns.items():
         columns = list(db.execute(f"PRAGMA table_info({table})"))
         if {r[1] for r in columns} != expected:
             raise RuntimeError(f"Unrecognized legacy {table} schema; migration refused")
         for _, name, kind, not_null, default, primary_key in columns:
             expected_type = "INTEGER" if table == "review_events" and name in {"id", "version"} else "TEXT"
-            nullable = name == "id" or (table == "runs" and name in {"parent_id", "error", "result_sha256"})
+            nullable = name == "id" or (table == "runs" and name in {"parent_id", "error", "result_sha256", "source_sha256", "artifact_path", "attempt_id"})
             if (kind.upper(), not_null, default, primary_key) != (expected_type, int(not nullable), None, int(name == "id")):
                 raise RuntimeError(f"Unrecognized legacy {table}.{name} definition; migration refused")
     indexes = list(db.execute("PRAGMA index_list(review_events)"))
@@ -63,8 +69,14 @@ def validate_legacy(db):
         raise RuntimeError("Legacy database has invalid references; migration refused")
     for name, sql in TRIGGERS.items():
         existing = db.execute("SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?", (name,)).fetchone()
+        if version and existing is None:
+            raise RuntimeError(f"Required {name} trigger is missing")
         if existing and normalized_sql(existing[0]) != normalized_sql(sql):
             raise RuntimeError(f"Unrecognized {name} trigger; migration refused")
+
+
+def validate_legacy(db):
+    return validate_schema(db, 0, allow_empty=True)
 
 
 def validate_ledger(db, version):
@@ -98,8 +110,12 @@ def migrate(db):
             elif target == 2:
                 # Old runs stay NULL until their preserved result/evidence validates the source.
                 db.execute("ALTER TABLE runs ADD COLUMN source_sha256 TEXT")
+            elif target == 3:
+                db.execute("ALTER TABLE runs ADD COLUMN artifact_path TEXT")
+                db.execute("ALTER TABLE runs ADD COLUMN attempt_id TEXT")
             db.execute("INSERT INTO schema_migrations VALUES(?,?)", (target, datetime.now(timezone.utc).isoformat()))
             db.execute(f"PRAGMA user_version={target}")
+        validate_schema(db, SCHEMA_VERSION)
         db.commit()
     except Exception:
         db.rollback()

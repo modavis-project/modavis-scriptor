@@ -15,14 +15,17 @@ from typing import Literal
 from xml.sax.saxutils import escape
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import Response
-from pydantic import BaseModel, Field, model_validator
+from fastapi.responses import Response, JSONResponse
 
 from corpus import Catalogue
 from annotations import number_anchor
 from pipeline import normalize, process_image, sha256
 from database import SCHEMA_VERSION, connect, migrate
-from evidence import IntegrityError, verified_bytes, verify
+from evidence import IntegrityError, verified_bytes, verified_copy, verify_file
+from storage import store_lock, service_owner, artifact_folder, verified_result, admission_folder, clear_abandoned_admissions, sync_directory
+from delivery import artifact_response, temporary_path, TemporaryFileResponse
+from contracts import Config, Review, HealthResponse, RunListResponse, RunResponse, QueuedRunResponse, GraphicsResult, ErrorResponse
+import jobs
 
 ROOT = Path(__file__).parent
 DATA = Path(os.environ.get("GRAPHICS_DATA", ROOT / "data"))
@@ -39,99 +42,61 @@ def connection():
     return connect(DATA / "graphics.sqlite")
 
 
-class Config(BaseModel):
-    mode: Literal["graphics", "organ_stops"] = "organ_stops"
-    model: Literal["best", "fast"] = "best"
-    language: Literal["eng", "deu", "eng+deu", "deu+eng"] = "eng+deu"
-    brightness: int = Field(135, ge=60, le=240)
-    saturation: int = Field(60, ge=10, le=160)
-    binarization: Literal["fixed", "otsu", "none"] = "fixed"
-    ink_threshold: int = Field(150, ge=50, le=230)
-    min_area: float = Field(.0006, ge=.0001, le=.05)
-    match_threshold: int = Field(65, ge=50, le=100)
-    regions: list[list[float]] = Field(default_factory=list, max_length=120)
-
-    @model_validator(mode="after")
-    def valid_regions(self):
-        for box in self.regions:
-            if len(box) != 4 or not all(0 <= v <= 1 for v in box) or box[2] < .005 or box[3] < .005 or box[0]+box[2] > 1.000001 or box[1]+box[3] > 1.000001:
-                raise ValueError("Each region is normalized [x,y,width,height], inside the image, at least 0.005 wide/high.")
-        return self
-
-
-class Review(BaseModel):
-    action: Literal["accept", "retain", "defer"]
-    reviewer: str = Field(min_length=2, max_length=120)
-    rationale: str = Field(min_length=12, max_length=2000)
-    name: str = Field("", max_length=300)
-    specification: str = Field("", max_length=100)
-    kind: Literal["stop", "coupler", "division", "accessory", "unknown", "not_text"] = "unknown"
-    division: str = Field("", max_length=100)
-    candidate_id: int | None = None
-    expected_version: int = Field(0, ge=0)
-
-    @model_validator(mode="after")
-    def meaningful(self):
-        if len(self.reviewer.strip()) < 2 or len(self.rationale.strip()) < 12:
-            raise ValueError("Provide reviewer identity and an image-based rationale (12 characters minimum).")
-        if self.action == "accept" and not self.name.strip() and self.kind != "not_text":
-            raise ValueError("A reviewed reading cannot be empty unless the region is marked not_text.")
-        return self
-
-
 def execute(run_id):
-    folder = DATA / run_id
-    with connection() as db:
-        row = db.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
-        db.execute("UPDATE runs SET status='running',error=NULL WHERE id=?", (run_id,))
+    return jobs.execute(run_id, DATA, connection, process_image, CATALOGUE, now)
+
+
+def schedule(run_id):
     try:
-        if not row["source_sha256"]:
-            raise IntegrityError("No preserved source checksum for this legacy run; re-upload the original image before processing")
-        verified_bytes(folder, "original", row["source_sha256"])
-        result = process_image(folder, json.loads(row["config"]), CATALOGUE)
-        verified_bytes(folder, "original", row["source_sha256"])
-        if result["image"]["sha256"] != row["source_sha256"]:
-            raise IntegrityError("Processed source checksum conflicts with the preserved upload")
-        result["metadata"] = json.loads(row["metadata"])
-        result["run_id"] = run_id
-        (folder / "result.json").write_text(json.dumps(result, ensure_ascii=False, indent=2))
-        with connection() as db:
-            db.execute("UPDATE runs SET status='completed',result_sha256=? WHERE id=?", (sha256(folder / "result.json"),run_id))
-    except Exception as error:
-        with connection() as db:
-            db.execute("UPDATE runs SET status='failed',error=? WHERE id=?", (str(error)[:1000],run_id))
+        POOL.submit(execute, run_id)
+    except RuntimeError as error:
+        with store_lock(DATA), connection() as db:
+            db.execute("UPDATE runs SET status='failed',error=? WHERE id=? AND status='queued'", ("Worker could not start; retry this run: " + str(error)[:500], run_id))
+        raise HTTPException(503, "Worker unavailable; the saved source is retained as a failed run for retry") from error
 
 
 @asynccontextmanager
 async def lifespan(_app):
-    with connection() as db:
-        migrate(db)
-        seed = "example-organ-stops-v1"
-        if not db.execute("SELECT 1 FROM runs WHERE id=?", (seed,)).fetchone():
-            folder = DATA / seed
-            folder.mkdir(exist_ok=True)
-            shutil.copyfile(ROOT / "example/Organ-stops.jpg", folder / "original")
-            metadata = json.loads((ROOT / "example/source.json").read_text())
-            db.execute("INSERT INTO runs(id,title,project,status,created_at,metadata,config,source_sha256) VALUES(?,?,?,?,?,?,?,?)", (seed,metadata["title"],"Organ-stop images","queued",now(),json.dumps(metadata),Config().model_dump_json(),sha256(ROOT / "example/Organ-stops.jpg")))
-            snapshot = ROOT / "example/processed"
-            if (snapshot / "result.json").exists():
-                manifest = json.loads((ROOT / "example/seed-manifest.json").read_text())
-                assert manifest["run_id"] == seed
-                for name, digest in manifest["files"].items():
-                    assert Path(name).name == name and sha256(snapshot/name) == digest, "Frozen example checksum mismatch"
-                    shutil.copyfile(snapshot/name,folder/name)
-                frozen = json.loads((folder/"result.json").read_text())
-                db.execute("UPDATE runs SET status='completed',config=?,result_sha256=?,source_sha256=? WHERE id=?", (json.dumps(frozen["paradata"]["config"]),sha256(folder/"result.json"),frozen["image"]["sha256"],seed))
-        pending = [r[0] for r in db.execute("SELECT id FROM runs WHERE status IN ('queued','running')")]
-        db.execute("UPDATE runs SET status='queued' WHERE status='running'")
-    for run_id in pending:
-        POOL.submit(execute, run_id)
-    yield
-    POOL.shutdown(wait=True)
+    with service_owner(DATA):
+        with store_lock(DATA, exclusive=True):
+            with connection() as db:
+                migrate(db)
+                seed = "example-organ-stops-v1"
+                if not db.execute("SELECT 1 FROM runs WHERE id=?", (seed,)).fetchone():
+                    folder = DATA / seed
+                    folder.mkdir(exist_ok=True)
+                    shutil.copyfile(ROOT / "example/Organ-stops.jpg", folder / "original")
+                    metadata = json.loads((ROOT / "example/source.json").read_text(encoding="utf-8"))
+                    db.execute("INSERT INTO runs(id,title,project,status,created_at,metadata,config,source_sha256) VALUES(?,?,?,?,?,?,?,?)", (seed,metadata["title"],"Organ-stop images","queued",now(),json.dumps(metadata),Config().model_dump_json(),sha256(ROOT / "example/Organ-stops.jpg")))
+                    snapshot = ROOT / "example/processed"
+                    if (snapshot / "result.json").exists():
+                        manifest = json.loads((ROOT / "example/seed-manifest.json").read_text(encoding="utf-8"))
+                        assert manifest["run_id"] == seed
+                        for name, digest in manifest["files"].items():
+                            assert Path(name).name == name and sha256(snapshot/name) == digest, "Frozen example checksum mismatch"
+                            shutil.copyfile(snapshot/name,folder/name)
+                        frozen = json.loads((folder/"result.json").read_text(encoding="utf-8"))
+                        db.execute("UPDATE runs SET status='completed',config=?,result_sha256=?,source_sha256=? WHERE id=?", (json.dumps(frozen["paradata"]["config"]),sha256(folder/"result.json"),frozen["image"]["sha256"],seed))
+            pending = jobs.recover(DATA, connection, ROOT)
+            with connection() as db:
+                known = {r[0] for r in db.execute("SELECT id FROM runs")}
+            clear_abandoned_admissions(DATA, known)
+        for run_id in pending:
+            schedule(run_id)
+        try:
+            yield
+        finally:
+            POOL.shutdown(wait=True, cancel_futures=True)
 
 
 app = FastAPI(title="MODAVIS Scriptor API", version="0.1.0", lifespan=lifespan,
-              description="Local-only image OCR, MODAVIS advisory retrieval, append-only human review. No automatic corpus substitutions.")
+              description="Local-only image OCR, MODAVIS advisory retrieval, append-only human review. No automatic corpus substitutions.",
+              responses={code: {"model": ErrorResponse} for code in [400, 404, 409, 413, 422, 429, 500, 503]})
+
+
+@app.exception_handler(TimeoutError)
+async def busy_store(_request, error):
+    return JSONResponse({"detail": str(error)}, status_code=503)
 
 
 @app.middleware("http")
@@ -160,25 +125,11 @@ def result_for(run_id):
     row = run_record(run_id)
     if row["status"] != "completed":
         raise HTTPException(409, "Run is not completed")
-    folder = DATA / run_id
     try:
-        raw = verified_bytes(folder, "result.json", row["result_sha256"])
-        result = json.loads(raw)
-        if result["run_id"] != run_id:
-            raise IntegrityError("Immutable result run identifier mismatch")
-        trusted = None
-        if run_id == "example-organ-stops-v1":
-            manifest = json.loads((ROOT / "example/seed-manifest.json").read_text())
-            if manifest["run_id"] == run_id and manifest["files"]["result.json"] == row["result_sha256"]:
-                trusted = manifest["files"]
-        result["integrity"] = verify(folder, result, trusted)
-        source_digest = result["image"]["sha256"]
-        if row["source_sha256"] is not None and row["source_sha256"] != source_digest:
-            raise IntegrityError("Preserved upload checksum conflicts with immutable result")
+        result = verified_result(DATA, row, ROOT)
         if row["source_sha256"] is None:
-            # Adopt a digest anchored in the preserved result only after verifying the source.
-            with connection() as db:
-                db.execute("UPDATE runs SET source_sha256=? WHERE id=? AND source_sha256 IS NULL", (source_digest, run_id))
+            with store_lock(DATA), connection() as db:
+                db.execute("UPDATE runs SET source_sha256=? WHERE id=? AND source_sha256 IS NULL", (result["image"]["sha256"], run_id))
         return result
     except (IntegrityError, OSError, ValueError, KeyError, TypeError) as error:
         raise HTTPException(409, f"Evidence integrity check failed: {error}. Restore evidence before continuing.") from error
@@ -234,19 +185,19 @@ def markdown(result, raw=False):
     return text
 
 
-@app.get("/health")
+@app.get("/health", response_model=HealthResponse)
 def health():
     return {"ok": True, "corpus": CATALOGUE.report, "local_only": True, "database_schema": SCHEMA_VERSION,
             "disposable_test_instance": os.environ.get("SCRIPTOR_DISPOSABLE_TEST") == "1"}
 
 
-@app.get("/runs")
+@app.get("/runs", response_model=RunListResponse)
 def runs():
     with connection() as db:
         return {"runs": [dict(r) for r in db.execute("SELECT id,title,project,status,created_at,parent_id,error FROM runs ORDER BY created_at DESC")], "corpus": CATALOGUE.report}
 
 
-@app.get("/runs/{run_id}")
+@app.get("/runs/{run_id}", response_model=RunResponse)
 def get_run(run_id: str):
     row = run_record(run_id)
     return {"run": {**row, "config": json.loads(row["config"]), "metadata": json.loads(row["metadata"])}, "result": materialize(run_id) if row["status"] == "completed" else None}
@@ -255,7 +206,7 @@ def get_run(run_id: str):
 def admit_run(run_id, folder, title, project, metadata, config, source_digest, parent_id=None):
     """Reserve capacity and insert together; callers own this newly created UUID folder."""
     try:
-        with connection() as db:
+        with store_lock(DATA), connection() as db:
             db.execute("BEGIN IMMEDIATE")
             if db.execute("SELECT count(*) FROM runs WHERE status IN ('queued','running')").fetchone()[0] >= 10:
                 raise HTTPException(429, "Processing queue is full; wait for a run to finish")
@@ -264,9 +215,13 @@ def admit_run(run_id, folder, title, project, metadata, config, source_digest, p
         # Never touch a parent folder or any previously admitted run on rejection.
         shutil.rmtree(folder)
         raise
+    try:
+        (folder / ".admission.json").unlink(missing_ok=True)
+    except OSError:
+        pass  # A committed reservation is valid; startup clears a leftover marker.
 
 
-@app.post("/runs", status_code=202)
+@app.post("/runs", status_code=202, response_model=QueuedRunResponse)
 async def create_run(file: UploadFile = File(...), title: str = Form(..., max_length=200), project: str = Form("Organ-stop images", max_length=200), config: str = Form("{}", max_length=20000), metadata: str = Form("{}", max_length=20000)):
     with connection() as db:
         if db.execute("SELECT count(*) FROM runs WHERE status IN ('queued','running')").fetchone()[0] >= 10:
@@ -285,22 +240,27 @@ async def create_run(file: UploadFile = File(...), title: str = Form(..., max_le
     if len(body) > 20 * 1024 * 1024:
         raise HTTPException(413, "Image limit is 20 MiB")
     run_id = uuid.uuid4().hex
-    folder = DATA / run_id
-    folder.mkdir()
-    (folder / "original").write_bytes(body)
+    with store_lock(DATA):
+        folder = admission_folder(DATA, run_id)
+        with (folder / "original").open("xb") as stream:
+            stream.write(body)
+            stream.flush()
+            os.fsync(stream.fileno())
+        sync_directory(folder)
     try:
-        normalize(folder / "original", folder / "image.png")
+        normalize(folder / "original", folder / ".validation.png")
+        (folder / ".validation.png").unlink()
     except Exception as error:
         # Only this newly created, validated UUID directory belongs to this failed upload.
         shutil.rmtree(folder)
         raise HTTPException(422, f"Invalid image: {error}") from error
     meta.update(title=title.strip(), original_filename=Path(file.filename or "image").name)
     admit_run(run_id, folder, title.strip(), project.strip(), json.dumps(meta), settings.model_dump_json(), hashlib.sha256(body).hexdigest())
-    POOL.submit(execute,run_id)
+    schedule(run_id)
     return {"id": run_id, "status": "queued"}
 
 
-@app.post("/runs/{run_id}/rerun", status_code=202)
+@app.post("/runs/{run_id}/rerun", status_code=202, response_model=QueuedRunResponse)
 def rerun(run_id: str, config: Config):
     parent = run_record(run_id)
     if parent["status"] in {"queued", "running"}:
@@ -316,11 +276,15 @@ def rerun(run_id: str, config: Config):
     except IntegrityError as error:
         raise HTTPException(409, str(error)) from error
     child = uuid.uuid4().hex
-    folder = DATA / child
-    folder.mkdir()
-    (folder / "original").write_bytes(original)
+    with store_lock(DATA):
+        folder = admission_folder(DATA, child)
+        with (folder / "original").open("xb") as stream:
+            stream.write(original)
+            stream.flush()
+            os.fsync(stream.fileno())
+        sync_directory(folder)
     admit_run(child, folder, parent["title"], parent["project"], parent["metadata"], config.model_dump_json(), source_digest, run_id)
-    POOL.submit(execute,child)
+    schedule(child)
     return {"id": child, "status": "queued"}
 
 
@@ -328,10 +292,9 @@ def rerun(run_id: str, config: Config):
 def image(run_id: str):
     result = result_for(run_id)
     try:
-        content = verified_bytes(DATA / run_id, "image.png", result["image"]["normalized_sha256"])
+        return artifact_response(artifact_folder(DATA, run_record(run_id)), "image.png", result["image"]["normalized_sha256"], "image/png")
     except IntegrityError as error:
         raise HTTPException(409, str(error)) from error
-    return Response(content, media_type="image/png")
 
 
 @app.get("/runs/{run_id}/regions/{region_id}/crop")
@@ -341,13 +304,12 @@ def crop(run_id: str, region_id: str):
     if region is None:
         raise HTTPException(404,"Region not found")
     try:
-        content = verified_bytes(DATA / run_id, f"{region_id}-crop.png", region["crop_sha256"])
+        return artifact_response(artifact_folder(DATA, run_record(run_id)), f"{region_id}-crop.png", region["crop_sha256"], "image/png")
     except IntegrityError as error:
         raise HTTPException(409, str(error)) from error
-    return Response(content, media_type="image/png")
 
 
-@app.patch("/runs/{run_id}/regions/{region_id}/review")
+@app.patch("/runs/{run_id}/regions/{region_id}/review", response_model=GraphicsResult)
 def review(run_id: str, region_id: str, decision: Review):
     result = result_for(run_id)
     region = next((r for r in result["regions"] if r["id"] == region_id),None)
@@ -355,7 +317,7 @@ def review(run_id: str, region_id: str, decision: Review):
         raise HTTPException(404,"Region not found")
     if decision.candidate_id is not None and not any(c["id"] == decision.candidate_id for c in region["candidates"]):
         raise HTTPException(422,"Candidate does not belong to this region")
-    with connection() as db:
+    with store_lock(DATA), connection() as db:
         db.execute("BEGIN IMMEDIATE")
         current = db.execute("SELECT coalesce(max(version),0) FROM review_events WHERE run_id=? AND region_id=?",(run_id,region_id)).fetchone()[0]
         if decision.expected_version != current:
@@ -392,18 +354,23 @@ def export(run_id: str, format: Literal["json","markdown","raw-markdown","csv","
     result=materialize(run_id)
     data=json.dumps(result,ensure_ascii=False,indent=2)
     if format == "bundle":
-        stream=io.BytesIO()
-        with zipfile.ZipFile(stream,"w",zipfile.ZIP_DEFLATED) as archive:
-            for name,value in {"reviewed.json":data,"reviewed.md":result["markdown"],"raw.md":result["raw_markdown"],"table.csv":csv_data(result),"regions.svg":annotated_svg(result),"source.json":json.dumps(result["metadata"],ensure_ascii=False,indent=2),"integrity.json":json.dumps(result["integrity"],ensure_ascii=False,indent=2)}.items():
-                archive.writestr(name,value)
-            folder=DATA/run_id
-            files = {**result["integrity"]["verified_files"], "result.json": result["immutable_result_sha256"]}
-            try:
-                for name, digest in files.items():
-                    archive.writestr(name, verified_bytes(folder, name, digest))
-            except IntegrityError as error:
-                raise HTTPException(409, str(error)) from error
-            archive.writestr("README.txt","MODAVIS Scriptor research export. Original evidence and immutable result.json are separate from reviewed.json. regions.svg references image.png. Box numbers are left of each upper-left corner. OCR is not ground truth. CSV has spreadsheet formula protection; JSON preserves literals. Credit and licensing are in source.json and reviewed.json. integrity.json describes verification coverage; legacy OCR artifacts without recorded checksums are excluded. Adapted example photograph: Tucker501, CC BY-SA 4.0; MODAVIS data arrangement: CC BY 4.0.\n")
-        return Response(stream.getvalue(),media_type="application/zip",headers={"Content-Disposition":f'attachment; filename="{run_id}-research.zip"'})
+        path = temporary_path(".zip")
+        try:
+            with zipfile.ZipFile(path,"w",zipfile.ZIP_DEFLATED) as archive:
+                for name,value in {"reviewed.json":data,"reviewed.md":result["markdown"],"raw.md":result["raw_markdown"],"table.csv":csv_data(result),"regions.svg":annotated_svg(result),"source.json":json.dumps(result["metadata"],ensure_ascii=False,indent=2),"integrity.json":json.dumps(result["integrity"],ensure_ascii=False,indent=2)}.items():
+                    archive.writestr(name,value)
+                folder=artifact_folder(DATA, run_record(run_id))
+                files = {**result["integrity"]["verified_files"], "result.json": result["immutable_result_sha256"]}
+                try:
+                    for name, digest in files.items():
+                        with archive.open(name, "w") as destination:
+                            verified_copy(folder, name, digest, destination)
+                except IntegrityError as error:
+                    raise HTTPException(409, str(error)) from error
+                archive.writestr("README.txt","MODAVIS Scriptor research export. Original evidence and immutable result.json are separate from reviewed.json. regions.svg references image.png. Box numbers are left of each upper-left corner. OCR is not ground truth. CSV has spreadsheet formula protection; JSON preserves literals. Credit and licensing are in source.json and reviewed.json. integrity.json describes verification coverage; legacy OCR artifacts without recorded checksums are excluded. Adapted example photograph: Tucker501, CC BY-SA 4.0; MODAVIS data arrangement: CC BY 4.0.\n")
+        except BaseException:
+            path.unlink(missing_ok=True)
+            raise
+        return TemporaryFileResponse(path, media_type="application/zip", filename=f"{run_id}-research.zip")
     media,ext,value={"json":("application/json","json",data),"markdown":("text/markdown","md",result["markdown"]),"raw-markdown":("text/markdown","raw.md",result["raw_markdown"]),"csv":("text/csv","csv",csv_data(result))}[format]
     return Response(value,media_type=media,headers={"Content-Disposition":f'attachment; filename="{run_id}.{ext}"'})

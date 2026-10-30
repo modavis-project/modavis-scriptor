@@ -53,7 +53,7 @@ class Migrations(unittest.TestCase):
             migrate(db)
             first = list(db.execute("SELECT * FROM schema_migrations"))
             self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], SCHEMA_VERSION)
-            self.assertEqual([r[0] for r in first], [1, 2])
+            self.assertEqual([r[0] for r in first], list(range(1, SCHEMA_VERSION + 1)))
             self.assertIn("source_sha256", [r[1] for r in db.execute("PRAGMA table_info(runs)")])
             migrate(db)
             self.assertEqual([tuple(r) for r in db.execute("SELECT * FROM schema_migrations")], [tuple(r) for r in first])
@@ -69,7 +69,7 @@ class Migrations(unittest.TestCase):
             before = [tuple(r) for r in db.execute("SELECT * FROM review_events ORDER BY id")]
             triggers = [tuple(r) for r in db.execute("SELECT name,sql FROM sqlite_master WHERE type='trigger' ORDER BY name")]
             migrate(db)
-            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 2)
+            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], SCHEMA_VERSION)
             self.assertIsNone(db.execute("SELECT source_sha256 FROM runs WHERE id='a'").fetchone()[0])
             self.assertEqual(before, [tuple(r) for r in db.execute("SELECT * FROM review_events ORDER BY id")])
             self.assertEqual(triggers, [tuple(r) for r in db.execute("SELECT name,sql FROM sqlite_master WHERE type='trigger' ORDER BY name")])
@@ -97,7 +97,7 @@ class Migrations(unittest.TestCase):
                     migrate(db)
                     return db.execute("PRAGMA user_version").fetchone()[0]
             with ThreadPoolExecutor(max_workers=5) as workers:
-                self.assertEqual(list(workers.map(initialize, range(5))), [2] * 5)
+                self.assertEqual(list(workers.map(initialize, range(5))), [SCHEMA_VERSION] * 5)
 
     def test_version_one_upgrade_preserves_rows_and_migration_history(self):
         with connect(self.path) as db:
@@ -109,7 +109,7 @@ class Migrations(unittest.TestCase):
             db.execute("INSERT INTO review_events VALUES(1,'a','r001',1,'{}','date')")
         with connect(self.path) as db:
             migrate(db)
-            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 2)
+            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], SCHEMA_VERSION)
             self.assertEqual(db.execute("SELECT applied_at FROM schema_migrations WHERE version=1").fetchone()[0], "original date")
             self.assertEqual(tuple(db.execute("SELECT status,error,source_sha256 FROM runs WHERE id='a'").fetchone()), ("failed", "Old failure", None))
             self.assertEqual(db.execute("SELECT count(*) FROM review_events").fetchone()[0], 1)
@@ -346,7 +346,7 @@ class IntegrityAPI(unittest.TestCase):
         cls.addClassCleanup(cls.stop_server)
         for _ in range(200):
             if cls.server.poll() is not None:
-                raise RuntimeError((Path(cls.temporary.name) / "server.log").read_text())
+                raise RuntimeError((Path(cls.temporary.name) / "server.log").read_text(encoding="utf-8"))
             try:
                 status, body = cls.request("/health")
                 if status == 200:
@@ -358,7 +358,7 @@ class IntegrityAPI(unittest.TestCase):
         else:
             raise RuntimeError("Isolated integrity test API did not become ready")
         cls.seed = "example-organ-stops-v1"
-        cls.seed_result = json.loads((cls.data / cls.seed / "result.json").read_text())
+        cls.seed_result = json.loads((cls.data / cls.seed / "result.json").read_text(encoding="utf-8"))
 
     @classmethod
     def stop_server(cls):
@@ -388,7 +388,7 @@ class IntegrityAPI(unittest.TestCase):
         return run_id, folder, result
 
     def save_run(self, run_id, folder, result):
-        (folder / "result.json").write_text(json.dumps(result, ensure_ascii=False, indent=2))
+        (folder / "result.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
         with connect(self.data / "graphics.sqlite") as db:
             db.execute("INSERT INTO runs(id,title,project,status,created_at,metadata,config,result_sha256) VALUES(?,?,?,?,?,?,?,?)", (run_id, "Integrity test", "Disposable", "completed", "date", json.dumps(result["metadata"]), json.dumps(result["paradata"]["config"]), sha256(folder / "result.json")))
 
@@ -463,8 +463,8 @@ class IntegrityAPI(unittest.TestCase):
     def test_legacy_coverage_never_trusts_unrecorded_ocr_or_exports_extra_files(self):
         run_id, folder, result = self.insert_run(self.seed_result)
         # This legacy OCR file has no historical checksum. It must not acquire one now.
-        (folder / "r001-ocr.png.tsv").write_text("unverifiable legacy bytes")
-        (folder / "private-notes.txt").write_text("must never be exported")
+        (folder / "r001-ocr.png.tsv").write_text("unverifiable legacy bytes", encoding="utf-8")
+        (folder / "private-notes.txt").write_text("must never be exported", encoding="utf-8")
         self.save_run(run_id, folder, result)
         raw_before = (folder / "result.json").read_bytes()
         code, body = self.request(f"/runs/{run_id}")
@@ -499,8 +499,11 @@ class IntegrityAPI(unittest.TestCase):
         extra = folder / "untracked-private.txt"
         link = folder / "untracked-link"
         try:
-            extra.write_text("private content")
-            link.symlink_to(extra)
+            extra.write_text("private content", encoding="utf-8")
+            try:
+                link.symlink_to(extra)
+            except OSError as error:
+                self.skipTest(f"Symbolic links are unavailable: {error}")
             code, body = self.request(f"/runs/{self.seed}/export?format=bundle")
             self.assertEqual(code, 200)
             with zipfile.ZipFile(io.BytesIO(body)) as archive:
@@ -517,7 +520,10 @@ class IntegrityAPI(unittest.TestCase):
         try:
             backup.write_bytes(original)
             path.unlink()
-            path.symlink_to(backup)
+            try:
+                path.symlink_to(backup)
+            except OSError as error:
+                self.skipTest(f"Symbolic links are unavailable: {error}")
             self.assert_rejected_everywhere(self.seed)
         finally:
             path.unlink(missing_ok=True)

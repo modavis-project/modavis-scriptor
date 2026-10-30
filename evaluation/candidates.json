@@ -1,0 +1,192 @@
+{
+  "schema": "modavis-scriptor.candidate-set/v1",
+  "status": "unreviewed",
+  "purpose": "Rights-documented candidates only; no human annotations or OCR accuracy claims. Held-out assignment is provisional until independent annotation and adjudication.",
+  "split_policy": "Group by organ/source; the bundled Brombaugh example is excluded. No source group occurs in both splits.",
+  "items": [
+    {
+      "id": "atzenweiler",
+      "group_id": "de-Atzenweiler",
+      "split": "development",
+      "strata": [
+        "German",
+        "round-labels"
+      ],
+      "source_url": "https://upload.wikimedia.org/wikipedia/commons/d/d7/Atzenweiler_Kirche_Orgel_Register.jpg",
+      "source_sha1": "8f9f1bb4c264acceae5046732f072433c70ffedd",
+      "source_bytes": 5357041,
+      "source_filename": "atzenweiler.jpg",
+      "rights": {
+        "license": "Public domain",
+        "license_url": "https://commons.wikimedia.org/wiki/File:Atzenweiler_Kirche_Orgel_Register.jpg",
+        "attribution": "Photo: Andreas Praefcke, File:Atzenweiler Kirche Orgel Register.jpg, Wikimedia Commons; Public domain",
+        "source_url": "https://commons.wikimedia.org/wiki/File:Atzenweiler_Kirche_Orgel_Register.jpg",
+        "changes": "Original source bytes unchanged; annotation preview is EXIF-oriented RGB."
+      },
+      "metadata_source": "https://commons.wikimedia.org/w/api.php",
+      "source_title": "File:Atzenweiler Kirche Orgel Register.jpg",
+      "source_sha256": "ac08c30cd528413512e0d19bfab05cbc35dcc06a4e9ca1b5dc68a3f58a484706"
+    },
+    {
+      "id": "bechtolsheim",
+      "group_id": "de-Bechtolsheim",
+      "split": "development",
+      "strata": [
+        "German",
+        "low-resolution"
+      ],
+      "source_url": "https://upload.wikimedia.org/wikipedia/commons/9/90/Bechtolsheim-Stummorgel-Register-IMG_6067.jpg",
+      "source_sha1": "596362f4fc9f208e118bb1668ae15e698e935b29",
+      "source_bytes": 503705,
+      "source_filename": "bechtolsheim.jpg",
+      "rights": {
+        "license": "CC BY-SA 3.0 de",
+        "license_url": "https://creativecommons.org/licenses/by-sa/3.0/de/deed.en",
+        "attribution": "Kandschwar, File:Bechtolsheim-Stummorgel-Register-IMG 6067.jpg, Wikimedia Commons; CC BY-SA 3.0 de",
+        "source_url": "https://commons.wikimedia.org/wiki/File:Bechtolsheim-Stummorgel-Register-IMG_6067.jpg",
+        "changes": "Original source bytes unchanged; annotation preview is EXIF-oriented RGB."
+      },
+      "metadata_source": "https://commons.wikimedia.org/w/api.php",
+      "source_title": "File:Bechtolsheim-Stummorgel-Register-IMG 6067.jpg",
+      "source_sha256": "ad8a705a3bd125947a6f643e5ac7696f261340ec50ee01e858f3f40d14e53a7d"
+    },
+    {
+      "id": "birnau",
+      "group_id": "de-Birnau",
+      "split": "held_out",
+      "strata": [
+        "German",
+        "round-labels"
+      ],
+      "source_url": "https://upload.wikimedia.org/wikipedia/commons/1/11/Birnau_Orgel_Register_links.jpg",
+      "source_sha1": "c293e7cbc0833de688522bc9665996060a16a21c",
+      "source_bytes": 2616223,
+      "source_filename": "birnau.jpg",
+      "rights": {
+        "license": "Public domain",
+        "license_url": "https://commons.wikimedia.org/wiki/File:Birnau_Orgel_Register_links.jpg",
+        "attribution": "Saberhagen, File:Birnau Orgel Register links.jpg, Wikimedia Commons; Public domain",
+        "source_url": "https://commons.wikimedia.org/wiki/File:Birnau_Orgel_Register_links.jpg",
+        "changes": "Original source bytes unchanged; annotation preview is EXIF-oriented RGB."
+      },
+      "metadata_source": "https://commons.wikimedia.org/w/api.php",
+      "source_title": "File:Birnau Orgel Register links.jpg",
+      "source_sha256": "84dd60bed7bf963c77983cf565ff1487f2ccc9f8a4e4ac503dee4edf0765df58"
+    },
+    {
+      "id": "gaeta",
+      "group_id": "it-Gaeta-Annunziata",
+      "split": "held_out",
+      "strata": [
+        "Italian",
+        "historical-controls"
+      ],
+      "source_url": "https://upload.wikimedia.org/wikipedia/commons/6/68/Gaeta%2C_santuario_della_Santissima_Annunziata%2C_organo_-_Registriera.jpg",
+      "source_sha1": "d2d5c368d0e34e4e5a7fbfa24f68ac2f36424813",
+      "source_bytes": 971782,
+      "source_filename": "gaeta.jpg",
+      "rights": {
+        "license": "CC BY-SA 3.0",
+        "license_url": "https://creativecommons.org/licenses/by-sa/3.0",
+        "attribution": "Pufui Pc Pifpef I, File:Gaeta, santuario della Santissima Annunziata, organo - Registriera.jpg, Wikimedia Commons; CC BY-SA 3.0",
+        "source_url": "https://commons.wikimedia.org/wiki/File:Gaeta%2C_santuario_della_Santissima_Annunziata%2C_organo_-_Registriera.jpg",
+        "changes": "Original source bytes unchanged; annotation preview is EXIF-oriented RGB."
+      },
+      "metadata_source": "https://commons.wikimedia.org/w/api.php",
+      "source_title": "File:Gaeta, santuario della Santissima Annunziata, organo - Registriera.jpg",
+      "source_sha256": "257f2613e21770596f5c8e140b4612c2af9a11317f55f3a166ea4802408665c2"
+    },
+    {
+      "id": "groningen",
+      "group_id": "nl-Groningen-Martinikerk",
+      "split": "held_out",
+      "strata": [
+        "Dutch",
+        "stop-knobs"
+      ],
+      "source_url": "https://upload.wikimedia.org/wikipedia/commons/7/7a/Groningen_Martinikerk_orgel_registerknoppen_08.JPG",
+      "source_sha1": "7a764c9aa43163955d6149bf6984b992e8d93214",
+      "source_bytes": 1800353,
+      "source_filename": "groningen.jpg",
+      "rights": {
+        "license": "Public domain",
+        "license_url": "https://commons.wikimedia.org/wiki/File:Groningen_Martinikerk_orgel_registerknoppen_08.JPG",
+        "attribution": "Wikiwal, File:Groningen Martinikerk orgel registerknoppen 08.JPG, Wikimedia Commons; Public domain",
+        "source_url": "https://commons.wikimedia.org/wiki/File:Groningen_Martinikerk_orgel_registerknoppen_08.JPG",
+        "changes": "Original source bytes unchanged; annotation preview is EXIF-oriented RGB."
+      },
+      "metadata_source": "https://commons.wikimedia.org/w/api.php",
+      "source_title": "File:Groningen Martinikerk orgel registerknoppen 08.JPG",
+      "source_sha256": "92963ee91a07f3a91813388cfd11399f56fce71f2bb6376fbed26fcdcccf96ab"
+    },
+    {
+      "id": "paslek",
+      "group_id": "pl-Paslek-St-Bartholomew",
+      "split": "held_out",
+      "strata": [
+        "historical-German",
+        "script-labels"
+      ],
+      "source_url": "https://upload.wikimedia.org/wikipedia/commons/c/c5/Pas%C5%82%C4%99k.Stop.labels.1717-1719.ko%C5%9Bci%C3%B3%C5%82.%C5%9Bw.Bart%C5%82omieja.JPG",
+      "source_sha1": "9e19d8420f53e1a80ca3fdf311a414626ae3bc48",
+      "source_bytes": 2981888,
+      "source_filename": "paslek.jpg",
+      "rights": {
+        "license": "CC BY-SA 3.0",
+        "license_url": "https://creativecommons.org/licenses/by-sa/3.0",
+        "attribution": "KrzysztofUrbaniak, File:Pasłęk.Stop.labels.1717-1719.kościół.św.Bartłomieja.JPG, Wikimedia Commons; CC BY-SA 3.0",
+        "source_url": "https://commons.wikimedia.org/wiki/File:Pas%C5%82%C4%99k.Stop.labels.1717-1719.ko%C5%9Bci%C3%B3%C5%82.%C5%9Bw.Bart%C5%82omieja.JPG",
+        "changes": "Original source bytes unchanged; annotation preview is EXIF-oriented RGB."
+      },
+      "metadata_source": "https://commons.wikimedia.org/w/api.php",
+      "source_title": "File:Pasłęk.Stop.labels.1717-1719.kościół.św.Bartłomieja.JPG",
+      "source_sha256": "10b136e46c11f7886956cdf9176727696fdb7a64f372fdff8fd53b7779d681e0"
+    },
+    {
+      "id": "pellworm",
+      "group_id": "de-Pellworm-Alte-Kirche",
+      "split": "held_out",
+      "strata": [
+        "German",
+        "stop-knobs"
+      ],
+      "source_url": "https://upload.wikimedia.org/wikipedia/commons/5/51/Pellworm_Alte_Kirche_Register_links_1201.jpg",
+      "source_sha1": "958ff0b4412cc55ce11bce3d183192509be94df6",
+      "source_bytes": 3866323,
+      "source_filename": "pellworm.jpg",
+      "rights": {
+        "license": "CC BY-SA 3.0",
+        "license_url": "https://creativecommons.org/licenses/by-sa/3.0",
+        "attribution": "Robert Schlesinger, File:Pellworm Alte Kirche Register links 1201.jpg, Wikimedia Commons; CC BY-SA 3.0",
+        "source_url": "https://commons.wikimedia.org/wiki/File:Pellworm_Alte_Kirche_Register_links_1201.jpg",
+        "changes": "Original source bytes unchanged; annotation preview is EXIF-oriented RGB."
+      },
+      "metadata_source": "https://commons.wikimedia.org/w/api.php",
+      "source_title": "File:Pellworm Alte Kirche Register links 1201.jpg",
+      "source_sha256": "5713856763a13e9de2fdf761caa5c881eb1e8d4a39796bb86d4d119a48bed7cb"
+    },
+    {
+      "id": "salzburg",
+      "group_id": "at-Salzburg-Cathedral-Renaissance",
+      "split": "held_out",
+      "strata": [
+        "German",
+        "modern-labels"
+      ],
+      "source_url": "https://upload.wikimedia.org/wikipedia/commons/d/d6/Register_Renaissance-Orgel_im_Salzburger_Dom.jpg",
+      "source_sha1": "70a6cad6ad986f554e96aa8471bc42143ba3767f",
+      "source_bytes": 5810176,
+      "source_filename": "salzburg.jpg",
+      "rights": {
+        "license": "CC BY-SA 4.0",
+        "license_url": "https://creativecommons.org/licenses/by-sa/4.0",
+        "attribution": "Stb1er, File:Register Renaissance-Orgel im Salzburger Dom.jpg, Wikimedia Commons; CC BY-SA 4.0",
+        "source_url": "https://commons.wikimedia.org/wiki/File:Register_Renaissance-Orgel_im_Salzburger_Dom.jpg",
+        "changes": "Original source bytes unchanged; annotation preview is EXIF-oriented RGB."
+      },
+      "metadata_source": "https://commons.wikimedia.org/w/api.php",
+      "source_title": "File:Register Renaissance-Orgel im Salzburger Dom.jpg",
+      "source_sha256": "53f9fdf09cdbddb60179740a2bf260408df04963380971b6e29b2466768e1ab8"
+    }
+  ]
+}

@@ -23,7 +23,7 @@ with tempfile.TemporaryDirectory(prefix="scriptor-pipeline-") as directory:
 
     fixture = graphics / "example/processed"
     config = Config().model_dump()
-    baseline = json.loads((fixture / "result.json").read_text())
+    baseline = json.loads((fixture / "result.json").read_text(encoding="utf-8"))
     regions = regions_from_surfaces(np.array(Image.open(fixture / "image.png")), config)
     assert len(regions) == 21, len(regions)
     assert sorted(r["bbox"] for r in regions) == sorted(r["bbox"] for r in baseline["regions"])

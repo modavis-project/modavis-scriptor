@@ -86,7 +86,7 @@ def main():
     # pristine for the independent browser acceptance check.
     example = Path(__file__).resolve().parents[2] / "services/graphics/example"
     original = (example / "Organ-stops.jpg").read_bytes()
-    metadata = json.loads((example / "source.json").read_text())
+    metadata = json.loads((example / "source.json").read_text(encoding="utf-8"))
     boundary = "scriptor-test-" + uuid.uuid4().hex
     fields = {"title": "Disposable full-panel upload", "project": "Automated QA only", "config": "{}", "metadata": json.dumps(metadata)}
     parts = []

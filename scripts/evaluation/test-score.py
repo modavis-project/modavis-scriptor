@@ -65,6 +65,19 @@ class MatchingTests(unittest.TestCase):
 
 
 class MetricTests(unittest.TestCase):
+    def test_unreadable_regions_count_for_detection_but_not_recognition(self):
+        unreadable = region("g1", "", gold=True)
+        unreadable["recognition_evaluable"] = False
+        report = evaluate(gold_manifest([unreadable]), [run_export()])
+        self.assertEqual(report["detection"]["true_positive"], 1)
+        self.assertEqual(report["raw_text"]["recognition_excluded_matches"], 1)
+        self.assertEqual(report["raw_text"]["recognition_evaluable_matches"], 0)
+        self.assertEqual(report["raw_text"]["character_errors"], 0)
+        self.assertIsNone(report["raw_text"]["cer"])
+        unreadable["recognition_evaluable"] = "false"
+        with self.assertRaises(ValidationError):
+            evaluate(gold_manifest([unreadable]), [run_export()])
+
     def test_nfc_only_preserves_case_diacritics_and_character_whitespace(self):
         self.assertEqual(raw_metrics("O\u0308", "Ö")["character_errors"], 0)
         self.assertEqual(raw_metrics("Ö", "ö")["character_errors"], 1)

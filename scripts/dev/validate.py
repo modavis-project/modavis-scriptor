@@ -13,26 +13,10 @@ import urllib.request
 import uuid
 from pathlib import Path
 
+from environment import docker_command, native_environment, native_python
+from processes import spawn, stop_process
+
 ROOT = Path(__file__).resolve().parents[2]
-
-
-def stop_process(process):
-    """Stop only this runner's child session, including test/service descendants."""
-    def send(sig):
-        try:
-            if os.name == "posix":
-                os.killpg(process.pid, sig)
-            elif process.poll() is None:
-                process.terminate() if sig == signal.SIGTERM else process.kill()
-        except ProcessLookupError:
-            pass
-
-    send(signal.SIGTERM)
-    try:
-        process.wait(timeout=10)
-    except subprocess.TimeoutExpired:
-        send(signal.SIGKILL)
-        process.wait(timeout=5)
 
 
 def interrupted(_signal, _frame):
@@ -53,11 +37,12 @@ def main():
     parser.add_argument("--no-build", action="store_true", help="reuse the development-test images")
     parser.add_argument("--skip-browser", action="store_true", help="explicitly omit Playwright coverage")
     parser.add_argument("--native", action="store_true", help="use the optional Python/Tesseract environment and built web server")
+    parser.add_argument("--log-dir", type=Path, help="retain disposable service diagnostics in this directory")
     args = parser.parse_args()
     signal.signal(signal.SIGTERM, interrupted)
     if not args.native and not shutil.which("docker"):
         parser.error("Docker is required; run npm run doctor.")
-    environment = os.environ.copy()
+    environment = native_environment() if args.native else os.environ.copy()
     api_port, web_port = free_port(), free_port()
     while api_port == web_port:
         web_port = free_port()
@@ -65,11 +50,11 @@ def main():
                        SCRIPTOR_TEST_API_URL=f"http://127.0.0.1:{api_port}",
                        SCRIPTOR_TEST_BASE_URL=f"http://127.0.0.1:{web_port}")
     project = "scriptor-check-" + uuid.uuid4().hex[:12]
-    compose = ["docker", "compose", "--project-name", project, "--file", "compose.test.yaml"]
+    compose = docker_command(environment) + ["compose", "--project-name", project, "--file", "compose.test.yaml"]
 
-    def run(command, timeout=1200):
+    def run(command, timeout=1200, stdout=None):
         print("\n+ " + " ".join(command), flush=True)
-        process = subprocess.Popen(command, cwd=ROOT, env=environment, start_new_session=os.name == "posix")
+        process = spawn(command, cwd=ROOT, env=environment, stdout=stdout)
         try:
             status = process.wait(timeout=timeout)
         except BaseException:
@@ -78,20 +63,17 @@ def main():
         if status:
             stop_process(process)
             raise subprocess.CalledProcessError(status, command)
+        stop_process(process)
 
     if args.native:
-        python = ROOT / "services/graphics/.venv/bin/python"
+        python = native_python()
         if not python.exists() or not shutil.which("tesseract"):
             parser.error("Run scripts/dev/setup-native.py first (requires Python 3.12 and Tesseract 5).")
         environment["PYTHONPATH"] = str(ROOT / "services/graphics")
-        models = ROOT / "services/graphics/.venv/tessdata"
-        if models.is_dir():
-            environment.setdefault("TESSDATA_PREFIX", str(models))
         processes, logs = [], []
 
         def start(command, directory, log):
-            process = subprocess.Popen(command, cwd=directory, env=environment, stdout=log, stderr=subprocess.STDOUT,
-                                       start_new_session=os.name == "posix")
+            process = spawn(command, cwd=directory, env=environment, stdout=log, stderr=subprocess.STDOUT)
             processes.append(process)
             return process
 
@@ -114,18 +96,20 @@ def main():
             temporary = Path(directory)
             environment.update(GRAPHICS_DATA=str(temporary / "data"), SCRIPTOR_DISPOSABLE_TEST="1")
             try:
+                run([sys.executable, "scripts/dev/test-processes.py"], 60)
                 run([sys.executable, "scripts/graphics/verify-assets.py"], 120)
                 run([str(python), "scripts/graphics/test-backend.py"])
                 run([str(python), "scripts/graphics/test-pipeline.py"])
+                run([str(python), "scripts/graphics/test-reliability.py"])
                 if not args.no_build:
                     run(["npm", "run", "build"])
                 for name in ("graphics.log", "web.log"):
-                    log = (temporary / name).open("w+")
+                    log = (temporary / name).open("w+", encoding="utf-8", errors="replace")
                     logs.append(log)
                 api = start([str(python), "-m", "uvicorn", "app:app", "--host", "127.0.0.1", "--port", str(api_port)],
                             ROOT / "services/graphics", logs[0])
                 ready(environment["SCRIPTOR_TEST_API_URL"] + "/health", api)
-                web = start([str(ROOT / "node_modules/.bin/wrangler"), "dev", "--config", "dist/server/wrangler.json",
+                web = start([shutil.which("node") or "node", str(ROOT / "node_modules/wrangler/bin/wrangler.js"), "dev", "--config", "dist/server/wrangler.json",
                              "--ip", "127.0.0.1", "--port", str(web_port), "--persist-to", str(temporary / "web-state"),
                              "--var", "GRAPHICS_API_URL:" + environment["SCRIPTOR_TEST_API_URL"]], ROOT, logs[1])
                 ready(environment["SCRIPTOR_TEST_BASE_URL"] + "/api/health", web)
@@ -142,13 +126,24 @@ def main():
                     print("\n".join(log.read().splitlines()[-80:]), file=sys.stderr)
                 return 1
             finally:
+                cleanup_errors = []
                 for process in reversed(processes):
-                    stop_process(process)
+                    try:
+                        stop_process(process)
+                    except (OSError, subprocess.SubprocessError) as error:
+                        cleanup_errors.append(error)
                 for log in logs:
                     log.close()
+                if args.log_dir:
+                    args.log_dir.mkdir(parents=True, exist_ok=True)
+                    for path in temporary.glob("*.log"):
+                        shutil.copyfile(path, args.log_dir / path.name)
+                if cleanup_errors:
+                    raise RuntimeError(f"Could not clean up all owned test processes: {cleanup_errors}")
 
     started = False
     try:
+        run([sys.executable, "scripts/dev/test-processes.py"], 60)
         run([sys.executable, "scripts/graphics/verify-assets.py"], 120)
         run(compose + ["config", "--quiet"], 30)
         # Cleanup is scoped by this random project name, including failed starts.
@@ -162,6 +157,7 @@ def main():
         run(up)
         run(compose + ["exec", "-T", "graphics", "python", "/checks/test-backend.py"])
         run(compose + ["exec", "-T", "graphics", "python", "/checks/test-pipeline.py"])
+        run(compose + ["exec", "-T", "graphics", "python", "/checks/test-reliability.py"])
         run([sys.executable, "scripts/graphics/test-api.py", environment["SCRIPTOR_TEST_API_URL"]])
         if not args.skip_browser:
             run(["npm", "run", "test:browser"])
@@ -177,6 +173,13 @@ def main():
         return 1
     finally:
         if started:
+            if args.log_dir:
+                args.log_dir.mkdir(parents=True, exist_ok=True)
+                try:
+                    with (args.log_dir / "containers.log").open("w", encoding="utf-8") as log:
+                        run(compose + ["logs", "--no-color", "--tail", "200"], 30, stdout=log)
+                except (OSError, subprocess.SubprocessError) as error:
+                    print(f"Could not retain container logs: {error}", file=sys.stderr)
             run(compose + ["down", "--volumes", "--remove-orphans", "--timeout", "10"], 60)
 
 

@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Scriptor · Independent annotation</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <header class="page-header">
+      <div>
+        <p class="eyebrow">MODAVIS Scriptor · local evaluation workspace</p>
+        <h1>Independent visual annotation</h1>
+        <p>Read the image directly. Saving a draft does not create or certify gold truth.</p>
+      </div>
+      <label
+        >Mode
+        <select id="mode" aria-label="Mode">
+          <option value="blind">Blind annotation</option>
+          <option value="adjudicate">Adjudication</option>
+        </select></label
+      >
+    </header>
+    <div id="message" role="status" aria-live="polite"></div>
+    <div id="error" role="alert" hidden></div>
+    <main>
+      <aside class="panel item-panel" aria-label="Source images">
+        <h2>Images</h2>
+        <p id="catalog-info" class="small"></p>
+        <nav id="items" aria-label="Image selection"></nav>
+      </aside>
+      <section class="workspace">
+        <section class="panel identity">
+          <div class="identity-row">
+            <label
+              >Reviewer ID
+              <input
+                id="reviewer"
+                autocomplete="off"
+                placeholder="Independent reviewer identifier" /></label
+            ><button id="open" type="button">Open annotation</button
+            ><button id="reload" type="button" disabled>Reload saved (discard local draft)</button>
+          </div>
+          <p id="annotation-state" class="small">
+            Enter your reviewer ID and open an image to annotate.
+          </p>
+          <label
+            >Annotation protocol
+            <textarea id="protocol" rows="2" minlength="12" maxlength="4000" disabled>
+MODAVIS literal-visible-text protocol v1; independent visual reading, NFC only for scoring.</textarea>
+          </label>
+        </section>
+        <section class="panel image-panel" aria-label="Image evidence">
+          <div class="toolbar">
+            <h2 id="image-title">Image evidence</h2>
+            <button id="draw" type="button" aria-pressed="false" disabled>Draw region</button
+            ><button id="add" type="button" disabled>Add coordinate region</button>
+          </div>
+          <p class="small">
+            Draw a rectangle, or add a region and enter coordinates. Escape cancels drawing; N
+            toggles drawing. Arrow keys select regions; Delete removes the selected region when
+            focus is outside an input.
+          </p>
+          <div class="image-scroll">
+            <div id="image-stage">
+              <img id="source-image" alt="Selected source image" /><svg
+                id="overlay"
+                viewBox="0 0 1000 1000"
+                preserveAspectRatio="none"
+                aria-label="Annotation rectangles"
+                tabindex="0"
+              ></svg>
+            </div>
+          </div>
+          <footer id="rights" aria-label="Source credit and rights"></footer>
+        </section>
+        <section
+          id="comparison"
+          class="panel"
+          hidden
+          aria-label="Independent annotation comparison"
+        >
+          <h2>Compare independent readings</h2>
+          <p>
+            Comparison is fetched only when requested in adjudication mode. The adjudicator must
+            differ from both original reviewers.
+          </p>
+          <div class="identity-row">
+            <label>Reviewer A <input id="reviewer-a" autocomplete="off" /></label
+            ><label>Reviewer B <input id="reviewer-b" autocomplete="off" /></label
+            ><button id="compare" type="button">Load comparison</button>
+          </div>
+          <div id="reading-panels" class="reading-panels"></div>
+          <p id="matching" class="small"></p>
+          <div class="toolbar">
+            <button id="copy-left" type="button" disabled>Use A as editable draft</button
+            ><button id="copy-right" type="button" disabled>Use B as editable draft</button>
+          </div>
+          <label
+            >Overall adjudication rationale (at least 32 characters)<textarea
+              id="adjudication-rationale"
+              rows="3"
+              minlength="32"
+              placeholder="Explain how conflicting readings were resolved against the image."
+            ></textarea>
+          </label>
+        </section>
+      </section>
+      <aside class="panel editor" aria-label="Region annotation">
+        <h2>Regions <span id="region-count">0</span></h2>
+        <nav id="regions" aria-label="Region selection"></nav>
+        <form id="region-form">
+          <fieldset id="region-fields" disabled>
+            <legend id="selected-heading">Select or draw a region</legend>
+            <div class="coordinates">
+              <label
+                >X <input id="box-x" type="number" min="0" max="1" step="0.001" required
+              /></label>
+              <label
+                >Y <input id="box-y" type="number" min="0" max="1" step="0.001" required
+              /></label>
+              <label
+                >Width
+                <input id="box-width" type="number" min="0.000001" max="1" step="any" required
+              /></label>
+              <label
+                >Height
+                <input id="box-height" type="number" min="0.000001" max="1" step="any" required
+              /></label>
+            </div>
+            <p class="small">
+              Normalized [x, y, width, height], within 0–1. Coordinates also resize and move the
+              rectangle.
+            </p>
+            <label
+              >Literal visible text
+              <textarea
+                id="literal-text"
+                rows="5"
+                spellcheck="false"
+                placeholder="Preserve spelling, accents, case, numerals, fractions and line breaks."
+              ></textarea>
+            </label>
+            <label class="checkbox"
+              ><input id="recognition-evaluable" type="checkbox" checked />Text can be evaluated for
+              recognition</label
+            >
+            <p class="small">
+              Uncheck for unreadable or partial truth. Its rectangle still counts in detection
+              evaluation.
+            </p>
+            <label
+              >Protected terms (one literal term per line)<textarea
+                id="protected-terms"
+                rows="3"
+                spellcheck="false"
+              ></textarea>
+            </label>
+            <label
+              >Region rationale
+              <textarea
+                id="region-rationale"
+                rows="3"
+                placeholder="Image-based reasoning; at least 12 characters for final adjudication."
+              ></textarea>
+            </label>
+            <button id="delete" type="button" class="danger">Delete selected region</button>
+          </fieldset>
+        </form>
+        <section class="save-panel" aria-label="Save annotation">
+          <label class="checkbox"
+            ><input id="complete" type="checkbox" disabled />This image annotation is
+            complete</label
+          >
+          <label class="checkbox"
+            ><input id="human-reviewed" type="checkbox" disabled />I personally reviewed every
+            region against the image</label
+          >
+          <p class="small">
+            Completion and human review are explicit declarations. There is no autosave or automatic
+            certification.
+          </p>
+          <button id="save" type="button" class="primary" disabled>Save annotation</button>
+        </section>
+      </aside>
+    </main>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

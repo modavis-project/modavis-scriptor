@@ -1,6 +1,8 @@
 """CPU-only scene-label OCR; independent of the retrieval corpus during recognition."""
 import csv
 import io
+import json
+import os
 import platform
 import re
 import shutil
@@ -22,7 +24,7 @@ Image.MAX_IMAGE_PIXELS = 40_000_000
 
 def tessdata_directory():
     """Ask the selected executable for its effective default model directory."""
-    completed = subprocess.run(["tesseract", "--list-langs"], check=True, capture_output=True, text=True, timeout=10)
+    completed = subprocess.run(["tesseract", "--list-langs"], check=True, capture_output=True, text=True, timeout=10, encoding="utf-8")
     header = completed.stdout + "\n" + completed.stderr
     match = re.search(r'List of available languages in (.+?) \(\d+\):', header)
     if not match:
@@ -80,10 +82,23 @@ def tesseract(image, path, lang, psm, model="fast"):
                "-c", "load_system_dawg=0", "-c", "load_freq_dawg=0", "-c", "tessedit_create_tsv=1"]
     if model == "best":
         command += ["--tessdata-dir", str(Path(__file__).parent / "models/best")]
-    completed = subprocess.run(command, check=True, capture_output=True, text=True, timeout=60)
-    Path(str(path) + ".tsv").write_text(completed.stdout)
+    marker = path.parent / ".ocr-active.json"
+    with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8") as process:
+        marker.write_text(json.dumps({"pid": process.pid, "parent_pid": os.getpid()}), encoding="utf-8")
+        try:
+            try:
+                stdout, stderr = process.communicate(timeout=60)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.communicate()
+                raise
+            if process.returncode:
+                raise subprocess.CalledProcessError(process.returncode, command, stdout, stderr)
+        finally:
+            marker.unlink(missing_ok=True)
+    Path(str(path) + ".tsv").write_text(stdout, encoding="utf-8")
     words = []
-    for row in csv.DictReader(io.StringIO(completed.stdout), delimiter="\t", quoting=csv.QUOTE_NONE):
+    for row in csv.DictReader(io.StringIO(stdout), delimiter="\t", quoting=csv.QUOTE_NONE):
         text = row.get("text", "").strip()
         if not text or float(row["conf"]) < 0:
             continue
@@ -191,7 +206,7 @@ def process_image(folder, config, catalogue):
             "image": {"width": width, "height": height, "original": original, "sha256": sha256(folder / "original"), "normalized_sha256": sha256(image_path),
                       "coordinates": "EXIF-normalized image; top-left origin; bbox [x1,y1,x2,y2] in pixels; normalized [x,y,width,height]; no perspective warp"},
             "paradata": {"pipeline_version": VERSION, "config": config, "processed_at": datetime.now(timezone.utc).isoformat(), "duration_seconds": round(time.monotonic()-started,2),
-                         "engine": subprocess.check_output(["tesseract", "--version"], text=True).splitlines()[0],
+                         "engine": subprocess.check_output(["tesseract", "--version"], text=True, encoding="utf-8").splitlines()[0],
                          "packages": {p: version(p) for p in ["Pillow", "numpy", "opencv-python-headless", "rapidfuzz", "fastapi"]},
                          "python": platform.python_version(), "platform": platform.platform(), "model_sha256": models,
                          "source_code_sha256": {p.name: sha256(p) for p in sorted(Path(__file__).parent.glob("*.py"))},

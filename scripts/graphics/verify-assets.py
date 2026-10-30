@@ -22,21 +22,21 @@ def digest(path, algorithm="sha256"):
 def main():
     example = GRAPHICS / "example"
     snapshot = example / "processed"
-    manifest = json.loads((example / "seed-manifest.json").read_text())
+    manifest = json.loads((example / "seed-manifest.json").read_text(encoding="utf-8"))
     require(manifest["schema"] == "modavis-scriptor.frozen-graphics-example/v1", "Unknown fixture schema")
     require(set(manifest["files"]) == {p.name for p in snapshot.iterdir() if p.is_file()}, "Fixture file list differs from manifest")
     for name, expected in manifest["files"].items():
         require(Path(name).name == name, f"Unsafe fixture filename: {name}")
         require(digest(snapshot / name) == expected, f"Fixture checksum mismatch: {name}")
 
-    result = json.loads((snapshot / "result.json").read_text())
+    result = json.loads((snapshot / "result.json").read_text(encoding="utf-8"))
     require(result["run_id"] == manifest["run_id"], "Fixture run identifier mismatch")
     require(result["schema"] == "modavis-scriptor.graphics-run/v1", "Unknown result schema")
     require(len(result["regions"]) == 21, "Expected 21 frozen regions")
     require(digest(snapshot / "original") == result["image"]["sha256"], "Original checksum mismatch")
     require(digest(snapshot / "image.png") == result["image"]["normalized_sha256"], "Normalized-image checksum mismatch")
     require(digest(example / "Organ-stops.jpg") == digest(snapshot / "original"), "Example source differs from frozen original")
-    source = json.loads((example / "source.json").read_text())
+    source = json.loads((example / "source.json").read_text(encoding="utf-8"))
     require(digest(example / "Organ-stops.jpg", "sha1") == source["wikimedia_sha1"], "Photo attribution checksum mismatch")
 
     # These snapshots are historical evidence. New service code must not replace them.
@@ -48,7 +48,7 @@ def main():
             require(digest(GRAPHICS / "models" / name) == expected, f"Bundled model checksum mismatch: {name}")
 
     corpus = GRAPHICS / "corpus"
-    report = json.loads((corpus / "import-report.json").read_text())
+    report = json.loads((corpus / "import-report.json").read_text(encoding="utf-8"))
     require(digest(corpus / "catalogue.sqlite") == report["catalogue_sha256"], "Corpus checksum mismatch")
     require(digest(ROOT / "scripts/graphics/import-modavis.py") == report["importer_sha256"], "Importer checksum differs from recorded projection")
     with sqlite3.connect((corpus / "catalogue.sqlite").resolve().as_uri() + "?mode=ro", uri=True) as db:

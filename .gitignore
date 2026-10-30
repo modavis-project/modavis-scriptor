@@ -1,6 +1,7 @@
 /node_modules/
 /test-results/
 /playwright-report/
+/evaluation-data/
 /dist/
 /.vinext/
 /.next/

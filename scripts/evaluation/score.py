@@ -95,6 +95,8 @@ def regions_at(value, location, gold=False):
         box(region.get("bbox_normalized"), f"{where}.bbox_normalized")
         value = text(region.get("text" if gold else "raw_text"), f"{where}.text" if gold else f"{where}.raw_text")
         if gold:
+            require(type(region.get("recognition_evaluable", True)) is bool,
+                    f"{where}.recognition_evaluable must be boolean")
             terms = list_at(region.get("protected_terms", []), f"{where}.protected_terms")
             seen_terms = set()
             for term in terms:
@@ -247,7 +249,7 @@ def evaluate(gold, results, threshold=0.5):
     by_hash = validate_results(results, gold)
     totals = dict(character_errors=0, reference_characters=0, word_errors=0, reference_words=0)
     images, losses = [], []
-    tp = fp = fn = eligible = reviewed_matches = reviewed_results = 0
+    tp = fp = fn = eligible = reviewed_matches = reviewed_results = scored_matches = excluded_matches = 0
     for item in gold["items"]:
         source = item["source_sha256"].lower()
         result = by_hash[source]
@@ -262,12 +264,17 @@ def evaluate(gold, results, threshold=0.5):
                  "false_positives": [r["id"] for i, r in enumerate(predicted) if i not in matched_result]}
         for left, right in pairs:
             target, actual = expected[left], predicted[right]
-            metrics = raw_metrics(target["text"], actual["raw_text"])
-            for key, value in metrics.items():
-                totals[key] += value
+            evaluable = target.get("recognition_evaluable", True)
+            metrics = raw_metrics(target["text"], actual["raw_text"]) if evaluable else None
+            if metrics is not None:
+                scored_matches += 1
+                for key, value in metrics.items():
+                    totals[key] += value
+            else:
+                excluded_matches += 1
             match = {"gold_region_id": target["id"], "result_region_id": actual["id"],
                      "iou": iou(target["bbox_normalized"], actual["bbox_normalized"]), "raw_text": metrics}
-            if "effective" in actual:
+            if "effective" in actual and evaluable:
                 reviewed_matches += 1
                 effective = nfc("\n".join(actual["effective"][field] for field in FIELDS))
                 match["effective_fields_protected_terms"] = []
@@ -293,6 +300,7 @@ def evaluate(gold, results, threshold=0.5):
             "matching": "maximum cardinality; descending IoU then region ID for deterministic traversal",
             "detection": detection_metrics(tp, fp, fn),
             "raw_text": {"stage": "matched raw OCR; NFC only; WER uses Unicode whitespace split", "matched_regions": tp,
+                         "recognition_evaluable_matches": scored_matches, "recognition_excluded_matches": excluded_matches,
                          **totals, "cer": ratio(totals["character_errors"], totals["reference_characters"]),
                          "wer": ratio(totals["word_errors"], totals["reference_words"])},
             "reviewed_effective_fields": {"stage": "literal NFC substring retention in name/specification/kind/division; no reviewed CER/WER",
