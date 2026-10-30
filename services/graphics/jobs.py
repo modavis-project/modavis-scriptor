@@ -1,12 +1,13 @@
 """Recoverable OCR attempts and atomic, hash-anchored publication."""
 import json
 import os
+import re
 import shutil
 import uuid
 from pathlib import Path
 
 from evidence import IntegrityError, sha256, verified_copy, verify_file, verify
-from storage import atomic_json, sync_directory, store_lock, verified_result
+from storage import atomic_json, sync_directory, sync_file, store_lock, verified_result, service_owner, publish_exclusive
 
 
 def execute(run_id, data, connection, process_image, catalogue, now):
@@ -39,8 +40,7 @@ def execute(run_id, data, connection, process_image, catalogue, now):
             # Flush generated evidence before the database commits the publication digest.
             for path in stage.iterdir():
                 if path.is_file():
-                    with path.open("rb") as stream:
-                        os.fsync(stream.fileno())
+                    sync_file(path)
             sync_directory(stage)
             digest = sha256(stage / "result.json")
             with connection() as db:
@@ -55,10 +55,11 @@ def execute(run_id, data, connection, process_image, catalogue, now):
             with connection() as db:
                 current = db.execute("SELECT result_sha256 FROM runs WHERE id=?", (run_id,)).fetchone()
                 if current and current[0]:
-                    db.execute("UPDATE runs SET status='failed',attempt_id=NULL,error=? WHERE id=? AND attempt_id=?", (str(error)[:1000], run_id, attempt))
+                    db.execute("UPDATE runs SET status='failed',error=? WHERE id=? AND attempt_id=?", (str(error)[:1000], run_id, attempt))
                 else:
                     db.execute("UPDATE runs SET status='failed',error=?,attempt_id=NULL WHERE id=? AND attempt_id=?", (str(error)[:1000], run_id, attempt))
-            shutil.rmtree(stage, ignore_errors=True)
+            if not current or not current[0]:
+                shutil.rmtree(stage, ignore_errors=True)
 
 
 def recover(data, connection, root):
@@ -95,6 +96,86 @@ def recover(data, connection, root):
                     db.execute("UPDATE runs SET status='queued',attempt_id=NULL,result_sha256=NULL,artifact_path=NULL,error=NULL WHERE id=?", (row["id"],))
         except (IntegrityError, OSError, ValueError, KeyError) as error:
             with connection() as db:
-                db.execute("UPDATE runs SET status='failed',attempt_id=NULL,error=? WHERE id=?", (f"Interrupted run recovery refused: {error}"[:1000], row["id"]))
+                if row.get("result_sha256"):
+                    db.execute("UPDATE runs SET status='failed',error=? WHERE id=?", (f"Interrupted run recovery refused: {error}"[:1000], row["id"]))
+                else:
+                    db.execute("UPDATE runs SET status='failed',attempt_id=NULL,error=? WHERE id=?", (f"Interrupted run recovery refused: {error}"[:1000], row["id"]))
     with connection() as db:
         return [r[0] for r in db.execute("SELECT id FROM runs WHERE status='queued'")]
+
+
+def recover_failed_publication(data, run_id):
+    """Explicit stopped-service recovery of one failed, hash-anchored publication."""
+    from database import SCHEMA_VERSION, connect, validate_ledger, validate_schema
+    from evidence import verified_bytes
+    data = Path(data).resolve()
+    if not data.is_dir() or not (data / "graphics.sqlite").is_file() or (data / "graphics.sqlite").is_symlink():
+        raise ValueError("Recovery requires an existing Scriptor data directory")
+    if not re.fullmatch(r"[a-zA-Z0-9-]{1,120}", run_id):
+        raise ValueError("Invalid recovery run identifier")
+    with service_owner(data), store_lock(data, exclusive=True), connect(data / "graphics.sqlite") as db:
+        db.execute("BEGIN IMMEDIATE")
+        version = db.execute("PRAGMA user_version").fetchone()[0]
+        if version != SCHEMA_VERSION:
+            raise IntegrityError("Use the current service to validate/migrate this store before explicit recovery")
+        validate_ledger(db, version)
+        validate_schema(db, version)
+        record = db.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
+        if record is None:
+            raise IntegrityError(f"Recovery run not found: {run_id}")
+        row = dict(record)
+        if row["status"] != "failed" or not row["result_sha256"] or row["artifact_path"] != "processed" or not row["source_sha256"]:
+            raise IntegrityError(f"Run {run_id} is not a failed prepared publication with preserved source/result checksums")
+        folder = data / run_id
+        if folder.is_symlink():
+            raise IntegrityError("Recovery run directories cannot be symbolic links")
+        verify_file(folder, "original", row["source_sha256"])
+        published = folder / "processed"
+        attempt = row["attempt_id"]
+        if published.exists() or published.is_symlink():
+            candidate = published
+        elif attempt and re.fullmatch(r"[a-f0-9]{32}", attempt):
+            candidate = folder / (".attempt-" + attempt)
+        else:
+            raise IntegrityError(f"Run {run_id} has no retained prepared directory; restore the exact anchored evidence before recovery")
+        if not candidate.is_dir() or candidate.is_symlink():
+            raise IntegrityError(f"Run {run_id} has missing or unsafe prepared evidence; restore exact anchored bytes before recovery")
+        result = json.loads(verified_bytes(candidate, "result.json", row["result_sha256"]))
+        if result.get("schema") != "modavis-scriptor.graphics-run/v1" or result.get("run_id") != run_id or result.get("image", {}).get("sha256") != row["source_sha256"]:
+            raise IntegrityError(f"Prepared result identity/source does not match run {run_id}")
+        if result.get("metadata") != json.loads(row["metadata"]) or result.get("paradata", {}).get("config") != json.loads(row["config"]):
+            raise IntegrityError(f"Prepared result metadata/configuration does not match run {run_id}")
+        integrity = verify(candidate, result)
+        if integrity["coverage"] != "complete":
+            raise IntegrityError("Failed publication recovery requires a complete preserved artifact manifest")
+        # All refusal conditions above are read-only. Flush only verified owned outputs.
+        for name in [*integrity["verified_files"], "result.json"]:
+            sync_file(candidate / name)
+        sync_directory(candidate)
+        if candidate != published:
+            publish_exclusive(candidate, published)
+        sync_directory(folder)
+        db.execute("UPDATE runs SET status='completed',attempt_id=NULL,error=NULL WHERE id=? AND status='failed' AND result_sha256=?", (run_id, row["result_sha256"]))
+        return {"run_id": run_id, "status": "completed", "result_sha256": row["result_sha256"], "source_sha256": row["source_sha256"], "artifact_path": "processed"}
+
+
+def main(argv=None):
+    import argparse
+    import sqlite3
+    import sys
+    parser = argparse.ArgumentParser(description="Explicit recovery of one failed prepared Scriptor publication; service must be stopped")
+    command = parser.add_subparsers(dest="command", required=True)
+    recover_command = command.add_parser("recover-publication")
+    recover_command.add_argument("data", type=Path)
+    recover_command.add_argument("run_id")
+    args = parser.parse_args(argv)
+    try:
+        print(json.dumps(recover_failed_publication(args.data, args.run_id), indent=2))
+        return 0
+    except (OSError, ValueError, RuntimeError, sqlite3.DatabaseError) as error:
+        print(f"Publication recovery refused: {error}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

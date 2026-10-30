@@ -144,7 +144,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm run test:dev
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python scripts/dev/test-processes.py
+          services/graphics/.venv/Scripts/python.exe scripts/dev/test-processes.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           services/graphics/.venv/Scripts/python.exe scripts/contracts/generate.py --check
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

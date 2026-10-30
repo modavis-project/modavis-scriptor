@@ -81,7 +81,7 @@ The complete source SQLite is not committed. `scripts/graphics/import-modavis.py
 
 ## Development checks
 
-Use Node.js 22.23.4 (`.nvmrc`). Tesseract and Python are provided by the graphics container.
+Use Node.js 22.23.4 (`.nvmrc`). The graphics container supplies the OCR runtime. Host contract and annotation-workflow checks also need the locked Python environment described in [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md).
 
 ```bash
 npm ci
@@ -92,7 +92,7 @@ npx playwright install chromium firefox webkit
 npm run test:integration
 ```
 
-`check` runs lint, TypeScript, the production build and dependency auditing. `test:integration` builds a disposable stack on free loopback ports, checks backend integrity and migrations, runs fresh OCR/upload tests and Chromium review tests, then removes only that test stack. It never mounts the research volume.
+`check` runs lint, TypeScript, the production build and dependency auditing. `test:integration` builds a disposable stack on free loopback ports, checks backend integrity, migrations, recovery and backups, runs fresh OCR/upload tests and Chromium/Firefox/WebKit review tests, then removes only that test stack. It never mounts the research volume.
 
 For frontend reload and separate backend development data, see [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md). That setup uses ports 3400/8410 and a separate Compose project. macOS users can select a dedicated internal-SSD Docker runtime with `npm run runtime -- start` and `npm run runtime -- exec -- npm run test:integration`, without changing the global Docker context.
 

@@ -45,6 +45,10 @@ class WindowsJob:
         self.api.QueryInformationJobObject.restype = wintypes.BOOL
         self.api.CloseHandle.argtypes = [wintypes.HANDLE]
         self.api.CloseHandle.restype = wintypes.BOOL
+        self.api.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        self.api.OpenProcess.restype = wintypes.HANDLE
+        self.api.IsProcessInJob.argtypes = [wintypes.HANDLE, wintypes.HANDLE, ctypes.POINTER(wintypes.BOOL)]
+        self.api.IsProcessInJob.restype = wintypes.BOOL
         self.handle = self.api.CreateJobObjectW(None, None)
         if not self.handle:
             raise ctypes.WinError(ctypes.get_last_error())
@@ -58,6 +62,23 @@ class WindowsJob:
     def attach(self, process):
         if not self.api.AssignProcessToJobObject(self.handle, int(process._handle)):
             raise ctypes.WinError(ctypes.get_last_error())
+
+    def contains(self, pid):
+        if not self.handle:
+            return False
+        from ctypes import wintypes
+        handle = self.api.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not handle:
+            if ctypes.get_last_error() == 87:  # The process has already exited.
+                return False
+            raise ctypes.WinError(ctypes.get_last_error())
+        try:
+            member = wintypes.BOOL()
+            if not self.api.IsProcessInJob(handle, self.handle, ctypes.byref(member)):
+                raise ctypes.WinError(ctypes.get_last_error())
+            return bool(member.value)
+        finally:
+            self.api.CloseHandle(handle)
 
     def close(self):
         if self.handle:
@@ -101,7 +122,11 @@ def spawn(command, **kwargs):
         job = WindowsJob()
         # The wrapper cannot create a child until it has joined the job. This
         # closes the assignment race and works after the wrapper itself exits.
-        command = [sys.executable, str(Path(__file__).with_name("process-child.py")), *command]
+        # A Windows venv python.exe redirects to another interpreter process.
+        # Use the real base executable for this stdlib-only gate so no child can
+        # appear outside the job before AssignProcessToJobObject finishes.
+        gate_python = getattr(sys, "_base_executable", None) or sys.executable
+        command = [gate_python, str(Path(__file__).with_name("process-child.py")), *command]
         kwargs.update(stdin=subprocess.PIPE, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
     else:
         kwargs.update(start_new_session=True)
@@ -153,3 +178,69 @@ def stop_process(process, timeout=10):
             pass
         process.wait(timeout=5)
     process._scriptor_stopped = True
+
+
+def owns_process(process, pid):
+    """Prove a PID is in this private session/job, including Windows launchers."""
+    if not getattr(process, "_scriptor_owned", False):
+        raise ValueError("Refusing to inspect a process not created by this validation runner")
+    if process._scriptor_stopped:
+        return False
+    if process._scriptor_job is not None:
+        return process._scriptor_job.contains(pid)
+    try:
+        return os.getpgid(pid) == process.pid
+    except ProcessLookupError:
+        return False
+
+
+def kill_process(process):
+    """Abruptly kill an owned tree for crash tests, without graceful shutdown."""
+    if not getattr(process, "_scriptor_owned", False):
+        raise ValueError("Refusing to kill a process not created by this validation runner")
+    if process._scriptor_stopped:
+        return
+    if process._scriptor_job is not None:
+        # close() terminates the entire job and waits for its active count to reach zero.
+        process._scriptor_job.close()
+    else:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    process.wait(timeout=10)
+    process._scriptor_stopped = True
+
+
+def process_running(pid):
+    """Check whether a recorded private worker is still executing after a crash."""
+    if os.name == "nt":
+        from ctypes import wintypes
+        api = ctypes.WinDLL("kernel32", use_last_error=True)
+        api.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        api.OpenProcess.restype = wintypes.HANDLE
+        api.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+        api.GetExitCodeProcess.restype = wintypes.BOOL
+        api.CloseHandle.argtypes = [wintypes.HANDLE]
+        api.CloseHandle.restype = wintypes.BOOL
+        handle = api.OpenProcess(0x1000, False, pid)
+        if not handle:
+            if ctypes.get_last_error() == 87:
+                return False
+            raise ctypes.WinError(ctypes.get_last_error())
+        try:
+            code = wintypes.DWORD()
+            if not api.GetExitCodeProcess(handle, ctypes.byref(code)):
+                raise ctypes.WinError(ctypes.get_last_error())
+            return code.value == 259  # STILL_ACTIVE
+        finally:
+            api.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+        if sys.platform.startswith("linux"):
+            # A dead orphan can remain a zombie briefly before init reaps it.
+            state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+            return state != "Z"
+        return True
+    except (ProcessLookupError, FileNotFoundError):
+        return False

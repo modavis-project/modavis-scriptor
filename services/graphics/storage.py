@@ -94,6 +94,12 @@ def sync_directory(path):
         os.close(descriptor)
 
 
+def sync_file(path):
+    """Flush a newly owned output; Windows FlushFileBuffers needs a writable handle."""
+    with Path(path).open("r+b" if os.name == "nt" else "rb") as stream:
+        os.fsync(stream.fileno())
+
+
 def atomic_json(path, value):
     path = Path(path)
     temporary = path.with_name(f".{path.name}-{uuid.uuid4().hex}.tmp")

@@ -8,7 +8,7 @@ import tempfile
 import time
 import unittest
 
-from processes import spawn, stop_process
+from processes import kill_process, owns_process, process_running, spawn, stop_process
 
 
 CHILD = """
@@ -80,6 +80,21 @@ class ProcessCleanup(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "not created"):
             stop_process(self.sentinel)
         self.assertIsNone(self.sentinel.poll())
+
+    def test_crash_kills_verified_descendants_and_preserves_unrelated_process(self):
+        process, heartbeat = self.tree()
+        child_pid = int(Path(str(heartbeat) + ".pid").read_text())
+        self.assertTrue(owns_process(process, child_pid))
+        self.assertFalse(owns_process(process, self.sentinel.pid))
+        self.assertTrue(process_running(child_pid))
+        kill_process(process)
+        deadline = time.monotonic() + 5
+        while process_running(child_pid) and time.monotonic() < deadline:
+            time.sleep(.02)
+        self.assertFalse(process_running(child_pid), "Verified worker survived abrupt tree termination")
+        self.assert_stopped(process, heartbeat)
+        with self.assertRaisesRegex(ValueError, "not created"):
+            kill_process(self.sentinel)
 
     def test_windows_launch_gate_cannot_start_before_job_assignment(self):
         marker = self.root / "must-not-exist"

@@ -61,7 +61,7 @@ npm run test:contracts
 
 Generation needs the locked Python dependencies; use the managed environment or an equivalent installed environment. Edit the Pydantic model and regenerate rather than editing generated types. CI checks generation drift and both Python/runtime validation.
 
-`components/graphics-workbench.tsx` composes configuration, upload, evidence, queue, review and output panels. `lib/graphics/use-workbench.ts` owns loading/navigation state. Unsaved per-region drafts survive navigation; a stale review retains the draft until the reviewer explicitly compares and rebases it on the current server version. Markdown loads separately from the initial review UI.
+`components/graphics-workbench.tsx` composes configuration, upload, evidence, queue, review and output panels. `lib/graphics/use-workbench.ts` owns loading/navigation state. Region drafts are held in memory for the current run, and region navigation preserves them. Switching runs or reloading the page starts from saved reviews. A stale review retains the draft until the reviewer explicitly compares and rebases it on the current server version. Markdown loads separately from the initial review UI.
 
 ## Validation and diagnostics
 

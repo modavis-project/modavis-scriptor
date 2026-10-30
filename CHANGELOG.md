@@ -5,6 +5,7 @@
 - Split the workbench into focused panels; retained per-region drafts through navigation and explicit conflict resolution.
 - Generated frontend types and runtime response validation from Pydantic/OpenAPI contracts, with drift checks.
 - Added atomic processing publication, real interruption/restart recovery, single-service data ownership and queue/review stress coverage.
+- Preserved prepared output after publication failures, added named stopped-service recovery, and refused backups that would omit unresolved prepared evidence.
 - Streamed verified image/ZIP responses from disk spools with bounded transfer memory and disconnect cleanup.
 - Added consistent live backup, actual restore rehearsal, schema/evidence verification and atomic non-overwriting restore.
 - Added Firefox/WebKit acceptance and Linux amd64/arm64 plus Windows native CI coverage.

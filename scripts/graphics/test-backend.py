@@ -31,6 +31,7 @@ import threading
 from database import SCHEMA_VERSION, connect, migrate
 from evidence import build_manifest, sha256
 from pipeline import tessdata_directory
+from private_processes import spawn, stop_process
 
 SERVICE = Path(importlib.util.find_spec("app").origin).parent
 LEGACY = """
@@ -342,7 +343,7 @@ class IntegrityAPI(unittest.TestCase):
         log = (Path(cls.temporary.name) / "server.log").open("wb")
         cls.addClassCleanup(log.close)
         env = {**os.environ, "GRAPHICS_DATA": str(cls.data), "SCRIPTOR_DISPOSABLE_TEST": "1", "PYTHONDONTWRITEBYTECODE": "1"}
-        cls.server = subprocess.Popen([sys.executable, "-m", "uvicorn", "app:app", "--host", "127.0.0.1", "--port", str(port)], cwd=SERVICE, env=env, stdout=log, stderr=subprocess.STDOUT)
+        cls.server = spawn([sys.executable, "-m", "uvicorn", "app:app", "--host", "127.0.0.1", "--port", str(port)], cwd=SERVICE, env=env, stdout=log, stderr=subprocess.STDOUT)
         cls.addClassCleanup(cls.stop_server)
         for _ in range(200):
             if cls.server.poll() is not None:
@@ -362,12 +363,7 @@ class IntegrityAPI(unittest.TestCase):
 
     @classmethod
     def stop_server(cls):
-        cls.server.terminate()
-        try:
-            cls.server.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            cls.server.kill()
-            cls.server.wait(timeout=5)
+        stop_process(cls.server)
 
     @classmethod
     def request(cls, path, method="GET", payload=None):

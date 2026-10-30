@@ -15,6 +15,7 @@ services:
       - "127.0.0.1:${SCRIPTOR_TEST_API_PORT:-8310}:8010"
     volumes:
       - ./scripts/graphics:/checks:ro
+      - ./scripts/dev:/dev-checks:ro
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8010/health')"]
       interval: 2s

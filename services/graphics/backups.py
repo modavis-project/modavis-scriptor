@@ -14,7 +14,7 @@ import zipfile
 
 from database import SCHEMA_VERSION, TRIGGERS, connect, normalized_sql, validate_ledger, validate_schema
 from evidence import ARTIFACT, CHUNK_SIZE, IntegrityError, artifact_stream, sha256, verified_copy
-from storage import artifact_folder, publish_exclusive, store_lock, verified_result, sync_directory
+from storage import artifact_folder, publish_exclusive, store_lock, verified_result, sync_directory, sync_file
 
 SCHEMA = "modavis-scriptor.backup/v1"
 ROOT = Path(__file__).parent
@@ -80,6 +80,12 @@ def managed_files(data):
             if row.get("artifact_path"):
                 files[f"{run_id}/original"] = result["image"]["sha256"]
         else:
+            if row.get("result_sha256") or row.get("artifact_path"):
+                if row["status"] in {"queued", "running"}:
+                    guidance = "Restart the current Scriptor service to finish verified publication recovery, then retry backup."
+                else:
+                    guidance = "Inspect and explicitly recover or resolve this failed publication before backup; restarting alone does not recover failed runs."
+                raise IntegrityError(f"Run {run_id} ({row['status']}) has unpublished prepared evidence. {guidance}")
             with artifact_stream(base, "original"):
                 pass
             digest = row.get("source_sha256")
@@ -198,8 +204,7 @@ def create_backup(data, archive_path, timeout=60):
                     archive.write(snapshot / name, name)
                 archive.writestr("backup.json", json.dumps(manifest, ensure_ascii=False, indent=2))
             verify_backup(temporary_archive)  # Actual extraction, DB checks, and evidence verification.
-            with temporary_archive.open("rb") as stream:
-                os.fsync(stream.fileno())
+            sync_file(temporary_archive)
             publish_exclusive(temporary_archive, archive_path)
             return manifest
     finally:
@@ -219,8 +224,7 @@ def restore_backup(archive_path, target):
         manifest = extract_verified(archive_path, stage)
         for path in stage.rglob("*"):
             if path.is_file():
-                with path.open("rb") as stream:
-                    os.fsync(stream.fileno())
+                sync_file(path)
         # File fsync alone does not persist containing directory entries on POSIX.
         for directory in sorted((path for path in stage.rglob("*") if path.is_dir()), key=lambda path: len(path.parts), reverse=True):
             sync_directory(directory)

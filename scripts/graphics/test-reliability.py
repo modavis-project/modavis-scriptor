@@ -10,7 +10,6 @@ import json
 import os
 from pathlib import Path
 import shutil
-import signal
 import socket
 import sqlite3
 import subprocess
@@ -31,7 +30,8 @@ import backups
 from database import SCHEMA_VERSION, connect, migrate
 from delivery import TemporaryFileResponse
 from evidence import IntegrityError, build_manifest, sha256, verified_copy
-from jobs import recover
+from jobs import recover, recover_failed_publication
+from private_processes import kill_process, owns_process, process_running, spawn, stop_process
 from storage import admission_folder, clear_abandoned_admissions, publish_exclusive, service_owner
 
 SERVICE = Path(importlib.util.find_spec("app").origin).parent
@@ -58,7 +58,7 @@ class ServiceTests(unittest.TestCase):
         log = (cls.workspace / f"service-{len(cls.processes)}.log").open("wb")
         cls.addClassCleanup(log.close)
         env = {**os.environ, "GRAPHICS_DATA": str(cls.data), "SCRIPTOR_DISPOSABLE_TEST": "1", "PYTHONDONTWRITEBYTECODE": "1"}
-        cls.process = subprocess.Popen([sys.executable, "-m", "uvicorn", "app:app", "--host", "127.0.0.1", "--port", str(port)], cwd=SERVICE, env=env, stdout=log, stderr=subprocess.STDOUT)
+        cls.process = spawn([sys.executable, "-m", "uvicorn", "app:app", "--host", "127.0.0.1", "--port", str(port)], cwd=SERVICE, env=env, stdout=log, stderr=subprocess.STDOUT)
         cls.processes.append(cls.process)
         for _ in range(400):
             if cls.process.poll() is not None:
@@ -75,16 +75,7 @@ class ServiceTests(unittest.TestCase):
     @classmethod
     def stop_all(cls):
         for process in cls.processes:
-            if process.poll() is None:
-                process.terminate()
-                try:
-                    process.wait(timeout=15)
-                except subprocess.TimeoutExpired:
-                    if os.name == "nt":
-                        subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    else:
-                        process.kill()
-                    process.wait(timeout=10)
+            stop_process(process)
 
     @classmethod
     def request(cls, path, method="GET", payload=None):
@@ -126,17 +117,16 @@ class ServiceTests(unittest.TestCase):
                     pass
             time.sleep(.01)
         self.assertIsNotNone(marker, "No active real Tesseract invocation observed")
-        self.assertEqual(marker["parent_pid"], self.process.pid)
-        if os.name == "nt":
-            subprocess.run(["taskkill", "/PID", str(self.process.pid), "/T", "/F"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        else:
-            os.kill(self.process.pid, signal.SIGKILL)
-            # This PID was recorded by this private service, during this exact attempt.
-            try:
-                os.kill(marker["pid"], signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-        self.process.wait(timeout=10)
+        # Windows virtual-environment launchers create an intermediate process;
+        # prove both recorded PIDs belong to our private job/session before killing.
+        self.assertTrue(owns_process(self.process, marker["parent_pid"]), "OCR parent is outside the private service tree")
+        self.assertTrue(owns_process(self.process, marker["pid"]), "Tesseract is outside the private service tree")
+        kill_process(self.process)
+        deadline = time.monotonic() + 10
+        while any(process_running(marker[key]) for key in ("parent_pid", "pid")) and time.monotonic() < deadline:
+            time.sleep(.02)
+        self.assertFalse(process_running(marker["parent_pid"]), "Old API worker survived the crash")
+        self.assertFalse(process_running(marker["pid"]), "Old Tesseract worker survived the crash")
         self.assertEqual(sha256(self.data / run_id / "original"), source_digest)
         self.assertFalse((self.data / run_id / "processed/result.json").exists())
         self.__class__.start()
@@ -244,6 +234,12 @@ class ServiceTests(unittest.TestCase):
             self.assertFalse(target.exists())
         finally:
             source.write_bytes(original)
+
+    def test_06_explicit_recovery_refuses_a_live_service(self):
+        before = sha256(self.data / "graphics.sqlite")
+        with self.assertRaisesRegex(RuntimeError, "already owns"):
+            recover_failed_publication(self.data, self.seed)
+        self.assertEqual(sha256(self.data / "graphics.sqlite"), before)
 
 
 class StoreUnitTests(unittest.TestCase):
@@ -366,6 +362,126 @@ class StoreUnitTests(unittest.TestCase):
         with patch.object(backups, "sync_directory", side_effect=sync), patch.object(backups, "publish_exclusive", side_effect=publish):
             restore_backup(archive, target)
         self.assertEqual((target / run_id / "original").read_bytes(), b"preserved failed source")
+
+    def prepare_failed_run(self):
+        run_id, attempt = uuid.uuid4().hex, uuid.uuid4().hex
+        folder = self.data / run_id
+        folder.mkdir()
+        shutil.copyfile(SERVICE / "example/processed/original", folder / "original")
+        stage = folder / (".attempt-" + attempt)
+        shutil.copytree(SERVICE / "example/processed", stage)
+        result = json.loads((stage / "result.json").read_text(encoding="utf-8"))
+        result["run_id"] = run_id
+        result["artifact_manifest"] = build_manifest(stage, result)
+        (stage / "result.json").write_text(json.dumps(result), encoding="utf-8")
+        with self.api.connection() as db:
+            db.execute("INSERT INTO runs(id,title,project,status,created_at,metadata,config,result_sha256,source_sha256,artifact_path,attempt_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)", (run_id, "Prepared failure", "Disposable", "failed", "date", json.dumps(result["metadata"]), json.dumps(result["paradata"]["config"]), sha256(stage / "result.json"), result["image"]["sha256"], "processed", attempt))
+        return run_id, folder, stage, result
+
+    def test_explicit_recovery_refuses_missing_corrupt_or_mismatched_bytes_unchanged(self):
+        for corruption in ("missing", "artifact", "metadata", "source"):
+            with self.subTest(corruption=corruption):
+                run_id, folder, stage, result = self.prepare_failed_run()
+                if corruption == "missing":
+                    (stage / "result.json").unlink()
+                elif corruption == "artifact":
+                    with (stage / "r001-ocr.png").open("ab") as stream:
+                        stream.write(b"corrupt")
+                elif corruption == "metadata":
+                    with self.api.connection() as db:
+                        db.execute("UPDATE runs SET metadata='{}' WHERE id=?", (run_id,))
+                else:
+                    with (folder / "original").open("ab") as stream:
+                        stream.write(b"corrupt")
+                database_digest = sha256(self.data / "graphics.sqlite")
+                files = {path.relative_to(folder).as_posix(): sha256(path) for path in folder.rglob("*") if path.is_file()}
+                with self.assertRaises(IntegrityError):
+                    recover_failed_publication(self.data, run_id)
+                self.assertEqual(sha256(self.data / "graphics.sqlite"), database_digest)
+                self.assertEqual({path.relative_to(folder).as_posix(): sha256(path) for path in folder.rglob("*") if path.is_file()}, files)
+
+    def test_real_publication_failure_preserves_payload_then_cli_recovers_and_backs_up(self):
+        run_id = uuid.uuid4().hex
+        folder = self.data / run_id
+        folder.mkdir()
+        shutil.copyfile(SERVICE / "example/processed/original", folder / "original")
+        frozen = json.loads((SERVICE / "example/processed/result.json").read_text(encoding="utf-8"))
+        with self.api.connection() as db:
+            db.execute("INSERT INTO runs(id,title,project,status,created_at,metadata,config,source_sha256) VALUES(?,?,?,?,?,?,?,?)", (run_id, "Publication failure", "Disposable", "queued", "date", json.dumps(frozen["metadata"]), json.dumps(frozen["paradata"]["config"]), frozen["image"]["sha256"]))
+        collision = folder / "processed"
+        collision.mkdir()
+        (collision / "preserve").write_text("An existing directory must never be overwritten", encoding="utf-8")
+        def retained_ocr(stage, _config, _catalogue):
+            for path in (SERVICE / "example/processed").iterdir():
+                if path.name not in {"original", "result.json"}:
+                    shutil.copyfile(path, stage / path.name)
+            result = json.loads(json.dumps(frozen))
+            result["artifact_manifest"] = build_manifest(stage, result)
+            return result
+        # The recognition fixture isolates a real nonempty-directory publication error.
+        with patch.object(self.api, "process_image", side_effect=retained_ocr):
+            self.api.execute(run_id)
+        row = self.api.run_record(run_id)
+        self.assertEqual(row["status"], "failed")
+        self.assertIsNotNone(row["attempt_id"])
+        stage = folder / (".attempt-" + row["attempt_id"])
+        self.assertEqual(sha256(stage / "result.json"), row["result_sha256"])
+        archive = Path(self.temporary.name) / "recovered.zip"
+        with self.assertRaises(IntegrityError):
+            create_backup(self.data, archive)
+        with self.assertRaises(IntegrityError):
+            recover_failed_publication(self.data, run_id)
+        self.assertEqual((collision / "preserve").read_text(encoding="utf-8"), "An existing directory must never be overwritten")
+        (collision / "preserve").unlink()
+        collision.rmdir()  # Remove only this test's deliberate publication collision.
+        command = subprocess.run([sys.executable, "-m", "jobs", "recover-publication", str(self.data), run_id], cwd=SERVICE, capture_output=True, text=True, encoding="utf-8", timeout=60)
+        self.assertEqual(command.returncode, 0, command.stderr)
+        self.assertEqual(json.loads(command.stdout)["status"], "completed")
+        recovered = self.api.run_record(run_id)
+        self.assertEqual(recovered["result_sha256"], row["result_sha256"])
+        self.assertIsNone(recovered["attempt_id"])
+        self.assertFalse(stage.exists())
+        create_backup(self.data, archive)
+        restored = Path(self.temporary.name) / "recovered-restored"
+        restore_backup(archive, restored)
+        self.assertEqual(sha256(restored / run_id / "processed/result.json"), row["result_sha256"])
+        self.assertEqual(sha256(restored / run_id / "original"), row["source_sha256"])
+
+    def test_backup_refuses_prepared_publication_until_verified_recovery(self):
+        run_id, attempt = uuid.uuid4().hex, uuid.uuid4().hex
+        folder = self.data / run_id
+        folder.mkdir()
+        shutil.copyfile(SERVICE / "example/processed/original", folder / "original")
+        stage = folder / (".attempt-" + attempt)
+        shutil.copytree(SERVICE / "example/processed", stage)
+        result = json.loads((stage / "result.json").read_text(encoding="utf-8"))
+        result["run_id"] = run_id
+        result["artifact_manifest"] = build_manifest(stage, result)
+        (stage / "result.json").write_text(json.dumps(result), encoding="utf-8")
+        digest = sha256(stage / "result.json")
+        with self.api.connection() as db:
+            db.execute("INSERT INTO runs(id,title,project,status,created_at,metadata,config,result_sha256,source_sha256,artifact_path,attempt_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)", (run_id, "Prepared backup", "Disposable", "running", "date", json.dumps(result["metadata"]), json.dumps(result["paradata"]["config"]), digest, result["image"]["sha256"], "processed", attempt))
+        archive = Path(self.temporary.name) / "prepared.zip"
+        for status, guidance in (("running", "Restart"), ("failed", "restarting alone does not recover failed")):
+            with self.api.connection() as db:
+                db.execute("UPDATE runs SET status=? WHERE id=?", (status, run_id))
+            with self.assertRaises(IntegrityError) as error:
+                create_backup(self.data, archive)
+            self.assertIn(run_id, str(error.exception))
+            self.assertIn(status, str(error.exception))
+            self.assertIn(guidance, str(error.exception))
+            self.assertFalse(archive.exists())
+            self.assertEqual(sha256(stage / "result.json"), digest)
+        with self.api.connection() as db:
+            db.execute("UPDATE runs SET status='running' WHERE id=?", (run_id,))
+        self.assertEqual(recover(self.data, self.api.connection, SERVICE), [])
+        create_backup(self.data, archive)
+        target = Path(self.temporary.name) / "prepared-restored"
+        restore_backup(archive, target)
+        with connect(target / "graphics.sqlite") as db:
+            row = db.execute("SELECT status,result_sha256,attempt_id FROM runs WHERE id=?", (run_id,)).fetchone()
+            self.assertEqual(tuple(row), ("completed", digest, None))
+        self.assertEqual(sha256(target / run_id / "processed/result.json"), digest)
 
     def test_backup_refuses_unrecognized_schema_without_creating_archive(self):
         with self.api.connection() as db:

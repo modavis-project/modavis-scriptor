@@ -35,6 +35,8 @@ The service stores state in `/data`:
 
 New processing writes a private `.attempt-<id>` directory. Generated artifacts are flushed and verified; the result digest is committed before atomic publication to `processed/`. Restart either validates and finishes that prepared publication or discards only the incomplete attempt and requeues the preserved source. Completed historical/frozen runs keep their existing flat layout and bytes. Schema 3 records `artifact_path` and `attempt_id` without changing the raw run JSON schema.
 
+A publication error after preparation retains the staged bytes and attempt identifier in a failed run. Explicit named-run recovery, with the service stopped, validates the anchored evidence before completing publication. Backup refuses unresolved prepared evidence; see `BACKUP.md` for recovery commands.
+
 An operating-system ownership lock rejects a second service for the same data directory. Shared operation locks coordinate uploads, processing and review with exclusive backup snapshots; Windows conservatively serializes the operations. Marked admission folders absent from SQLite can be cleaned after interruption; unmarked directories are never treated as disposable reservations.
 
 ## Persistence

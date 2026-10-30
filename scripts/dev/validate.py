@@ -96,7 +96,7 @@ def main():
             temporary = Path(directory)
             environment.update(GRAPHICS_DATA=str(temporary / "data"), SCRIPTOR_DISPOSABLE_TEST="1")
             try:
-                run([sys.executable, "scripts/dev/test-processes.py"], 60)
+                run([str(python), "scripts/dev/test-processes.py"], 60)
                 run([sys.executable, "scripts/graphics/verify-assets.py"], 120)
                 run([str(python), "scripts/graphics/test-backend.py"])
                 run([str(python), "scripts/graphics/test-pipeline.py"])

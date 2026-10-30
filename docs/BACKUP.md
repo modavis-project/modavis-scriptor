@@ -16,6 +16,16 @@ node scripts/dev/python.mjs scripts/graphics/backup.py restore /path/outside-dat
 
 The current service and backup tool share an operation lock. Backup waits for active OCR and excludes new mutations while taking the snapshot; `--timeout 60` controls the wait. SQLite write locking also protects the database snapshot from older services that do not cooperate with the file lock. Read-only responses can continue. A restore into an existing or live data directory is never allowed.
 
+An interrupted run can have verified output prepared but not yet published. Backup refuses this unresolved state and names the affected run rather than omitting its prepared output. Start the current service to recover queued/running work, then retry the backup. A failed run with prepared output requires inspection and explicit recovery first; backup does not alter its database rows or preserved bytes.
+
+For a failed publication, stop the service and recover only the named run:
+
+```bash
+node scripts/dev/python.mjs scripts/graphics/recover.py /path/to/data RUN_ID
+```
+
+The command requires exclusive service ownership and verifies the preserved source, anchored result, artifact manifest, run identity, configuration and metadata before completing publication. It preserves raw bytes and refuses missing/corrupt evidence or conflicting published output. It does not retry OCR or reset checksums. Restart the service after successful recovery, then retry backup.
+
 The report lists schema version, run/event counts, coverage and historically unverifiable files. A legacy OCR input/TSV without an original digest is preserved as transport-checked backup bytes, while its historical limitation remains explicit. Restoring a backup does not invent historical hashes or rewrite raw OCR. This differs from research ZIP exports, which omit unverifiable legacy processing files.
 
 ## Docker data
@@ -30,6 +40,16 @@ npm run runtime -- exec -- docker compose -f compose.dev.yaml exec -T graphics p
 npm run runtime -- exec -- docker compose -f compose.dev.yaml cp "graphics:/tmp/$scriptor_archive" "$scriptor_backup_dir/$scriptor_archive"
 node scripts/dev/python.mjs scripts/graphics/backup.py verify "$scriptor_backup_dir/$scriptor_archive"
 ```
+
+For a failed prepared publication in this development volume, stop the service before the named recovery:
+
+```bash
+npm run runtime -- exec -- docker compose -f compose.dev.yaml stop graphics
+npm run runtime -- exec -- docker compose -f compose.dev.yaml run --rm --no-deps -T graphics python -m jobs recover-publication /data RUN_ID && \
+npm run runtime -- exec -- docker compose -f compose.dev.yaml up --detach --wait graphics
+```
+
+Restart after successful recovery; if verification refuses, preserve the files for inspection rather than changing their hashes.
 
 The current working image is `modavis-scriptor-graphics:development`. For a restore preview without touching the original volume, create a new explicitly named volume and restore into a new child directory:
 

@@ -119,7 +119,7 @@ npm run test:integration
 
 On Linux, Playwright may need `npx playwright install --with-deps chromium firefox webkit`. The integration runner uses a randomly named Compose project, free loopback ports and fresh disposable data. It runs asset, backend/migration/reliability, real OCR, upload/API, proxy and all three browser-engine checks, then removes only its own containers and volumes even on failure. `--no-build` reuses the test images; `--skip-browser` explicitly runs a reduced suite. See `VALIDATION.md` and `DEVELOPMENT.md` for full host prerequisites and contract/workflow checks.
 
-For an entirely native test stack, run `npm run test:integration -- --native`. It uses the prepared Python/Tesseract environment and Wrangler on free ports with temporary state, and stops its own processes afterwards. `--native --no-build` reuses the host web build. CI exercises the Docker path.
+For an entirely native test stack, run `npm run test:integration -- --native`. It uses the prepared Python/Tesseract environment and Wrangler on free ports with temporary state, and stops its own processes afterwards. `--native --no-build` reuses the host web build. CI exercises Linux amd64/arm64 containers and native Windows separately.
 
 ## Troubleshooting
 
@@ -141,7 +141,7 @@ Choose `deu`, `eng`, `deu+eng` or `eng+deu` before creating the new run. Changin
 
 ### A decision returns HTTP 409
 
-Another decision exists for that region version. Reload the run, inspect the newer event and submit a decision with the current `expected_version`.
+Another decision exists for that region version. In the interface, compare the newer decision with the retained draft and explicitly rebase before submitting. API clients must inspect the newer event and submit a decision with the current `expected_version`.
 
 HTTP 409 can also indicate missing or changed evidence. Inspect the returned message and restore the exact original artifact from a verified backup. Do not edit result JSON or replace stored digests to bypass the check. Historical non-example runs may have incomplete artifact coverage; their raw results remain unchanged and unverifiable OCR files are excluded from exports.
 
