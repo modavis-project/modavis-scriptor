@@ -139,13 +139,21 @@ jobs:
       - name: Windows host and contract checks
         run: |
           npm run check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm run test:evaluation
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm run test:dev
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python scripts/dev/test-processes.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           services/graphics/.venv/Scripts/python.exe scripts/contracts/generate.py --check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           services/graphics/.venv/Scripts/python.exe scripts/contracts/test-models.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm run test:contracts
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm run doctor -- --native
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/cache@v4
         with:
           path: ~/AppData/Local/ms-playwright

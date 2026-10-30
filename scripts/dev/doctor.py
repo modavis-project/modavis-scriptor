@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 from environment import docker_command, native_environment, native_python, python312
+from processes import executable_command
 from storage import docker_storage, physical_storage
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -30,11 +31,11 @@ def main():
 
     def check(label, command, hint, validate=None):
         try:
-            process = subprocess.run(command, cwd=ROOT, env=environment, capture_output=True, text=True, timeout=30)
+            process = subprocess.run(executable_command(command), cwd=ROOT, env=environment, capture_output=True, text=True, timeout=30)
             output = process.stdout.strip()
             passed = process.returncode == 0 and (validate(output) if validate else True)
             detail = output.splitlines()[0] if passed and output else "OK" if passed else hint
-        except (OSError, subprocess.TimeoutExpired, ValueError, AttributeError):
+        except (OSError, subprocess.TimeoutExpired, ValueError, AttributeError, RuntimeError):
             passed, detail = False, hint
         checks.append({"check": label, "ok": passed, "detail": detail})
 

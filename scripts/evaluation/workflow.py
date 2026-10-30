@@ -134,11 +134,13 @@ def workspace_lock(workspace):
         lock.seek(0)
         if os.name == "nt":
             import msvcrt
-            if lock.read(1) == b"":
-                lock.write(b"0")
-                lock.flush()
-            lock.seek(0)
             try:
+                # Windows byte locks also prohibit reads by another process.
+                # Inspect metadata so contention reaches our conflict handler.
+                if os.fstat(lock.fileno()).st_size == 0:
+                    lock.write(b"0")
+                    lock.flush()
+                lock.seek(0)
                 msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
             except OSError as error:
                 raise ValueError("Another annotation/collection/freeze process owns this workspace") from error
