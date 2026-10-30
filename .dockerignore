@@ -5,6 +5,9 @@
 .next
 dist
 node_modules
+test-results
+playwright-report
+evaluation-data
 release
 .DS_Store
 .env*

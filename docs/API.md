@@ -1,6 +1,6 @@
 # API
 
-The FastAPI service listens on `http://127.0.0.1:8010`. Interactive OpenAPI documentation is available at `/docs`; the machine-readable schema is `/openapi.json`. The web application proxies the supported routes under `/api/graphics`.
+The research Compose default exposes FastAPI at `http://127.0.0.1:8010`; the separate development setup uses port 8410. Interactive OpenAPI documentation is available at `/docs`; the machine-readable schema is `/openapi.json`. The web application proxies the supported routes under `/api/graphics`.
 
 ## Endpoints
 
@@ -43,6 +43,8 @@ curl --fail-with-body \
 
 Supplying `regions` disables automatic detection for the new run.
 
+A completed parent must pass evidence verification before reprocessing. A failed parent can retry from its preserved upload checksum; legacy failed runs without a trusted checksum return HTTP 409 with reupload guidance. Queued/running parents return 409 until processing finishes. Successful retries create a new child and preserve the parent.
+
 ## Review
 
 ```bash
@@ -57,5 +59,9 @@ Reviewer labels require two non-whitespace characters and rationales require twe
 ## Errors
 
 Validation failures return HTTP 422. Missing records return 404. Pending artifacts and checksum mismatches return 409. A full queue returns 429. Errors use FastAPI's JSON `detail` field.
+
+New run results include `artifact_manifest`; materialized results additionally include `integrity` with verification coverage, verified digests and unverifiable legacy filenames. Changed or missing recorded evidence causes 409 before serving, review, rerun or export. ZIP bundles contain `integrity.json` and only verified artifacts. See `DATA_AND_PROVENANCE.md` for legacy coverage.
+
+Health reports the database schema and `disposable_test_instance`. The latter is true only with `SCRIPTOR_DISPOSABLE_TEST=1`, which belongs in the isolated test configuration. Mutation tests require that marker and a fresh non-research loopback port.
 
 Direct API calls do not provide authentication. Bind the service to loopback as supplied, or place a suitably configured gateway in front of it.

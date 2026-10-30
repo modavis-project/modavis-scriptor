@@ -1,0 +1,42 @@
+# Independent, disposable stack. Never uses the research Compose file or volume.
+# Clean up with the same project name: docker compose -f compose.test.yaml down --volumes
+name: modavis-scriptor-tests
+
+services:
+  graphics:
+    build:
+      context: ./services/graphics
+    image: modavis-scriptor-graphics:development-test
+    init: true
+    environment:
+      SCRIPTOR_DISPOSABLE_TEST: "1"
+      PYTHONPATH: /app
+    ports:
+      - "127.0.0.1:${SCRIPTOR_TEST_API_PORT:-8310}:8010"
+    volumes:
+      - ./scripts/graphics:/checks:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8010/health')"]
+      interval: 2s
+      timeout: 5s
+      start_period: 10s
+      retries: 30
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: modavis-scriptor:development-test
+    init: true
+    ports:
+      - "127.0.0.1:${SCRIPTOR_TEST_WEB_PORT:-3410}:3000"
+    command: ["wrangler", "dev", "--config", "dist/server/wrangler.json", "--ip", "0.0.0.0", "--port", "3000", "--persist-to", "/data", "--var", "GRAPHICS_API_URL:http://graphics:8010"]
+    depends_on:
+      graphics:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 2s
+      timeout: 5s
+      start_period: 20s
+      retries: 30
